@@ -1,0 +1,12 @@
+# Local files currently produced by development and tests
+.DS_Store
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local input and output paths used by committed configurations
+/data/
+/results/
+/results-smoke/
+/report/

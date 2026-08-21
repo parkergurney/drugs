@@ -1,0 +1,10 @@
+seed: 20260819
+output_dir: results/gate2
+selected_policy: null
+temperature_k: 500
+equilibration_ps: 2
+production_ps: 5
+timestep_fs: 0.5
+checkpoints: 100
+block_lengths: [10, 50, 100]
+train_checkpoints: 60

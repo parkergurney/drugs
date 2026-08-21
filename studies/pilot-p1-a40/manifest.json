@@ -1,0 +1,26 @@
+{
+  "experiment_id": "P1-A40",
+  "status": "pilot",
+  "completed_at_utc": "2026-08-19T19:04:36Z",
+  "legacy_code_commit": "bc48cb550aa58c4588ca8822c2076d83fc0b182f",
+  "pre_reset_history_bundle_sha256": "26456048103ac761a9460c4a8ab200a579de619ce5032a4322833106bb0d187a",
+  "model": "MACE-OFF23_small",
+  "model_sha256": "9bd176f569bb26925f5d8ae7779e01babafaed42bece49f34cb1f561925a8149",
+  "environment": {
+    "gpu": "NVIDIA A40",
+    "cuda": "12.1",
+    "python": "3.11.13",
+    "torch": "2.4.1",
+    "mace-torch": "0.3.16",
+    "ase": "3.29.0",
+    "numpy": "2.4.6",
+    "platform": "Linux-6.8.0-134-generic-x86_64-with-glibc2.39"
+  },
+  "seed": 20260819,
+  "accuracy_batch_size": 32,
+  "batch_sizes": [1, 8, 32],
+  "warmups": 20,
+  "timed_iterations": 100,
+  "timing_scope": "prepared disconnected graph batch; model call plus output transfer",
+  "genuine_graph_batch": true
+}

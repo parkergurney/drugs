@@ -1,0 +1,16 @@
+seed: 20260819
+output_dir: results/a100-gate1
+dataset_dir: data/rmd17
+molecules: [ethanol, malonaldehyde, aspirin]
+ordinary_counts: [34, 33, 33]
+candidate_pool: 3000
+high_force_count: 100
+high_force_cap_per_molecule: 40
+close_contact_count: 100
+close_contact_distances: [0.8, 1.0, 1.2]
+policies: [fp32, bf16_amp]
+batch_sizes: [1, 8, 32]
+warmups: 20
+timed_iterations: 100
+device: cuda
+model: small

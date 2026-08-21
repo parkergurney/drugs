@@ -1,0 +1,37 @@
+{
+  "verdict": "STOP",
+  "gate_passed": false,
+  "selected_policy": null,
+  "policies": {
+    "tf32": {
+      "finite_count": 300,
+      "total_count": 300,
+      "speedup": 0.9955207415221499,
+      "speedup_ci_low": 0.9886301847080986,
+      "speedup_ci_high": 1.0029970479248387,
+      "winning_batch_size": 32,
+      "batch1_slowdown": 1.0087655857669748,
+      "max_force_error_ev_per_a": 19075.537869321175,
+      "mean_max_force_error_ev_per_a": 116.08627278752188,
+      "p95_max_force_error_ev_per_a": 3.5586479176727623,
+      "mean_energy_error_ev": -1.9426041666666667,
+      "std_energy_error_ev": 23.909515937139936,
+      "passes": false
+    },
+    "bf16_amp": {
+      "finite_count": 294,
+      "total_count": 300,
+      "speedup": 0.8195393172869595,
+      "speedup_ci_low": 0.8056349832719114,
+      "speedup_ci_high": 0.8344614447378192,
+      "winning_batch_size": 8,
+      "batch1_slowdown": 1.2181697415607269,
+      "max_force_error_ev_per_a": 455.8342811260279,
+      "mean_max_force_error_ev_per_a": 5.5868785494094695,
+      "p95_max_force_error_ev_per_a": 12.148615955903567,
+      "mean_energy_error_ev": 80.17863121811224,
+      "std_energy_error_ev": 55.55009338561867,
+      "passes": false
+    }
+  }
+}

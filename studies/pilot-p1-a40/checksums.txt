@@ -1,0 +1,14 @@
+# Full downloaded result bundle (stored locally and excluded from Git)
+f487fb4bb969478c96a897e77acf612867f2ff65a8a737e32b9a04e5a1122419  precision-md-a40-gate1-stop.tar.gz
+
+# Complete repository history before the clean-root reset
+26456048103ac761a9460c4a8ab200a579de619ce5032a4322833106bb0d187a  pre-cleanup-history.bundle
+
+# Key files inside the bundle, copied from its supplied checksum manifest
+531f6d0ad8aad5a44fc25d7fa73d122942db2989e718044545d286920fdf0e3b  results/analysis.json
+713871ee0a04c4c988ed40a6d06cdec4f50eda537b7d830702ceeb10357bde96  results/gate1-benchmark-full.log
+9a55007226534d450089e1150cdae0daa84d1ef460f8f7e14c1fc8087c2e842b  results/gate1/evaluations.parquet
+96dc331664b6501aca5da24977eb5ff48e96a95dd570f69d29f93c635f5352cd  results/gate1/manifest.json
+f6475ad8c400845b59ef8a20f1ae9a348c9f30d025c5ebb9dbca5a3d1d470212  results/gate1/summary.json
+60d2582d4534083e77a56ac9b85d6f818964af6a32d8c53009c9da430ca71621  results/gate1/timings.parquet
+2941183eaa7793756bc68cfdeda0a52f8d934f17a37105ff05b71d8f56e5f64d  report/decision.md

@@ -1,0 +1,13 @@
+name: gpu-benchmark
+on:
+  workflow_dispatch:
+jobs:
+  benchmark:
+    runs-on: [self-hosted, linux, x64, gpu]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.11'
+      - run: uv sync --extra ml
+      - run: scripts/run-gpu-gate1.sh
