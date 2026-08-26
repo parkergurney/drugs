@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import json
+from pathlib import Path
 import numpy as np
 
 
@@ -13,10 +16,48 @@ class Frame:
     stratum: str = "ordinary"
 
 
-def ordinary_indices(lengths: dict[str, int], counts=(34, 33, 33), seed=20260819):
+def sha256_file(path: str | Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def source_frame_id(frame_id: str) -> str:
+    return frame_id.split("-cc-", 1)[0]
+
+
+def load_excluded_sources(path: str | Path | None) -> tuple[set[str], str | None]:
+    if path is None:
+        return set(), None
+    path = Path(path)
+    selection = json.loads(path.read_text(encoding="utf-8"))
+    frame_ids = selection.get("frames")
+    if not isinstance(frame_ids, list) or not all(isinstance(item, str) for item in frame_ids):
+        raise ValueError(f"invalid selection file: {path}")
+    return {source_frame_id(item) for item in frame_ids}, sha256_file(path)
+
+
+def ensure_disjoint_sources(selected_sources, excluded_sources) -> None:
+    overlap = sorted(set(selected_sources) & set(excluded_sources))
+    if overlap:
+        raise ValueError(f"prepared dataset overlaps excluded sources: {overlap[:5]}")
+
+
+def ordinary_indices(lengths: dict[str, int], counts=(34, 33, 33), seed=20260819,
+                     excluded_sources=frozenset()):
     rng = np.random.default_rng(seed)
-    return {mol: np.sort(rng.choice(lengths[mol], n, replace=False))
-            for (mol, n) in zip(lengths, counts, strict=True)}
+    selected = {}
+    for mol, count in zip(lengths, counts, strict=True):
+        eligible = np.array([
+            index for index in range(lengths[mol])
+            if f"{mol}-{index}" not in excluded_sources
+        ])
+        if len(eligible) < count:
+            raise ValueError(f"insufficient non-excluded ordinary frames for {mol}")
+        selected[mol] = np.sort(rng.choice(eligible, count, replace=False))
+    return selected
 
 
 def select_high_force(candidates, count=100, cap=40):

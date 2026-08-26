@@ -6,7 +6,10 @@ import pandas as pd
 from .analysis import analyze_results, analyze_trials
 from .benchmark import run_benchmark
 from .config import Gate1Config, Gate2Config, load_config
-from .data import Frame, close_contact, ordinary_indices, select_high_force
+from .data import (
+    Frame, close_contact, ensure_disjoint_sources, load_excluded_sources,
+    ordinary_indices, select_high_force, sha256_file,
+)
 from .model import MaceEvaluator
 from .types import AtomicBatch
 from .report import render_report
@@ -15,24 +18,38 @@ from .report import render_report
 def prepare_data(config):
     """Load simple rMD17 NPZ archives without downloading licensed/remote assets."""
     config.output_dir.mkdir(parents=True, exist_ok=True); frames = []
+    excluded_sources, exclusion_hash = load_excluded_sources(config.exclude_selection)
     archives = {}
+    source_hashes = {}
     for mol in config.molecules:
         path = config.dataset_dir / f"{mol}.npz"
         if not path.exists(): raise FileNotFoundError(f"missing rMD17 archive: {path}")
         archives[mol] = np.load(path)
-    indices = ordinary_indices({m: len(a["R"]) for m, a in archives.items()}, config.ordinary_counts, config.seed)
+        source_hashes[mol] = sha256_file(path)
+    indices = ordinary_indices(
+        {m: len(a["R"]) for m, a in archives.items()}, config.ordinary_counts,
+        config.seed, excluded_sources,
+    )
     for mol, ids in indices.items():
         archive = archives[mol]
         numbers = archive["z"] if "z" in archive else archive["nuclear_charges"]
-        for idx in ids: frames.append({"frame_id": f"{mol}-{idx}", "molecule": mol, "stratum": "ordinary", "atomic_numbers": numbers, "positions": archive["R"][idx]})
+        for idx in ids:
+            frame_id = f"{mol}-{idx}"
+            frames.append({"frame_id": frame_id, "source_frame_id": frame_id,
+                           "molecule": mol, "stratum": "ordinary",
+                           "atomic_numbers": numbers, "positions": archive["R"][idx]})
     if len(frames) != 100: raise RuntimeError("ordinary selection did not produce 100 frames")
     evaluator = MaceEvaluator(config.model, config.device)
     score_path = config.output_dir / "candidate_scores.parquet"
     candidates = []
     if score_path.exists():
         candidates = pd.read_parquet(score_path).to_dict("records")
-        if candidates and any(row["seed"] != config.seed or row["model_hash"] != evaluator.model_hash
-                              for row in candidates):
+        if candidates and any(
+            row["seed"] != config.seed or row["model_hash"] != evaluator.model_hash
+            or row.get("dataset_id", "gate1") != config.dataset_id
+            or row.get("exclude_selection_sha256") != exclusion_hash
+            for row in candidates
+        ):
             raise RuntimeError(f"candidate score checkpoint does not match this run: {score_path}")
         print(f"Resuming from {len(candidates)}/{config.candidate_pool} candidate scores", flush=True)
     completed = {row["frame_id"] for row in candidates}
@@ -41,7 +58,13 @@ def prepare_data(config):
     for i in range(config.candidate_pool % len(config.molecules)): allocations[i] += 1
     for mol, n in zip(config.molecules, allocations, strict=True):
         archive = archives[mol]; numbers = archive["z"] if "z" in archive else archive["nuclear_charges"]
-        for idx in np.sort(rng.choice(len(archive["R"]), n, replace=False)):
+        eligible_indices = np.array([
+            index for index in range(len(archive["R"]))
+            if f"{mol}-{index}" not in excluded_sources
+        ])
+        if len(eligible_indices) < n:
+            raise RuntimeError(f"insufficient non-excluded candidate frames for {mol}")
+        for idx in np.sort(rng.choice(eligible_indices, n, replace=False)):
             frame_id = f"{mol}-{idx}"
             if frame_id in completed:
                 continue
@@ -49,7 +72,9 @@ def prepare_data(config):
             if not result.finite: raise RuntimeError(f"FP32 candidate scoring failed: {mol}-{idx}: {result.error}")
             candidates.append({"frame_id": frame_id, "molecule": mol, "frame_index": int(idx),
                                "max_force": float(np.linalg.norm(result.forces, axis=1).max()),
-                               "seed": config.seed, "model_hash": evaluator.model_hash})
+                               "seed": config.seed, "model_hash": evaluator.model_hash,
+                               "dataset_id": config.dataset_id,
+                               "exclude_selection_sha256": exclusion_hash})
             completed.add(frame_id)
             if len(candidates) % 50 == 0:
                 temporary = score_path.with_suffix(".tmp.parquet")
@@ -72,18 +97,57 @@ def prepare_data(config):
         archive = archives[row["molecule"]]
         numbers = archive["z"] if "z" in archive else archive["nuclear_charges"]
         high.append({"frame_id": row["frame_id"], "molecule": row["molecule"],
-                     "stratum": "high_force", "atomic_numbers": numbers,
+                     "source_frame_id": row["frame_id"], "stratum": "high_force",
+                     "atomic_numbers": numbers,
                      "positions": archive["R"][row["frame_index"]]})
     close = []
     for i, row in enumerate(frames):
         source = Frame(row["frame_id"], row["molecule"], row["atomic_numbers"], row["positions"])
         generated = close_contact(source, config.close_contact_distances[i % len(config.close_contact_distances)], i)
-        close.append({"frame_id": generated.frame_id, "molecule": generated.molecule, "stratum": generated.stratum,
+        close.append({"frame_id": generated.frame_id, "source_frame_id": row["frame_id"],
+                      "molecule": generated.molecule, "stratum": generated.stratum,
                       "atomic_numbers": generated.atomic_numbers, "positions": generated.positions})
     all_frames = frames + high + close
     if len(all_frames) != 300: raise RuntimeError("Gate 1 construction must produce exactly 300 frames")
+    selected_sources = {frame["source_frame_id"] for frame in all_frames}
+    overlap = sorted(selected_sources & excluded_sources)
+    ensure_disjoint_sources(selected_sources, excluded_sources)
     np.savez_compressed(config.output_dir / "frames.npz", frames=np.array(all_frames, dtype=object))
-    (config.output_dir / "selection.json").write_text(json.dumps({"seed": config.seed, "frames": [f["frame_id"] for f in all_frames]}, indent=2) + "\n")
+    selection = {
+        "schema_version": 2,
+        "dataset_id": config.dataset_id,
+        "seed": config.seed,
+        "frames": [frame["frame_id"] for frame in all_frames],
+        "source_frames": [frame["source_frame_id"] for frame in all_frames],
+        "records": [
+            {key: frame[key] for key in ("frame_id", "source_frame_id", "molecule", "stratum")}
+            for frame in all_frames
+        ],
+    }
+    selection_path = config.output_dir / "selection.json"
+    selection_path.write_text(json.dumps(selection, indent=2) + "\n")
+    manifest = {
+        "schema_version": 1,
+        "dataset_id": config.dataset_id,
+        "seed": config.seed,
+        "model": config.model,
+        "model_hash": evaluator.model_hash,
+        "source_dataset_sha256": source_hashes,
+        "exclude_selection": str(config.exclude_selection) if config.exclude_selection else None,
+        "exclude_selection_sha256": exclusion_hash,
+        "excluded_source_count": len(excluded_sources),
+        "overlap_count": len(overlap),
+        "stratum_counts": {
+            stratum: sum(frame["stratum"] == stratum for frame in all_frames)
+            for stratum in ("ordinary", "high_force", "close_contact")
+        },
+        "selection_sha256": sha256_file(selection_path),
+        "frames_sha256": sha256_file(config.output_dir / "frames.npz"),
+        "selection_policy": "FP32 high-force scoring; no reduced-precision outcomes inspected",
+    }
+    (config.output_dir / "dataset-manifest.json").write_text(
+        json.dumps(manifest, indent=2) + "\n"
+    )
     print(f"Prepared {len(all_frames)} Gate 1 frames in {config.output_dir}", flush=True)
 
 

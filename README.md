@@ -93,6 +93,29 @@ SHA-256, and model hash. Multi-trial analysis rejects mixed frame or model
 hashes. Preserve the frozen `frames.npz`, `selection.json`, and
 `candidate_scores.parquet` alongside their checksums.
 
+On an A40, `scripts/run-a40-c1-reproduction.sh` performs all five isolated P1
+reproduction processes, samples GPU telemetry once per second, verifies the
+frozen frame and model hashes, and runs the combined analysis. It refuses a
+dirty tracked worktree, a non-A40 GPU, an altered P1 frame file, or an existing
+trial result.
+
+## Preparing the sealed C1 dataset
+
+Recover the exact P1 `frames.npz`, `selection.json`, and
+`candidate_scores.parquet` into `data/frozen/p1/` before GPU work. The C1
+configuration selects a new dataset while excluding every molecular source
+frame represented in P1:
+
+```bash
+uv run precision-md prepare-data --config configs/c1-dataset.yaml
+```
+
+This writes `results/datasets/c1-confirmatory/`, including a dataset manifest
+with source-data, selection, frame, model, and exclusion checksums. Preparation
+fails on any P1 source-frame overlap. C1 preparation uses FP32 scoring only;
+do not benchmark this dataset under TF32 or BF16 until the confirmatory energy
+and force margins are frozen in a dated protocol amendment.
+
 ## Research provenance
 
 Pilot P1 is documented in

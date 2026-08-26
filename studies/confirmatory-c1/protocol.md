@@ -6,9 +6,18 @@
 - Status: draft, to be frozen before experiment C1
 - Pilot used to design protocol: P1
 - Confirmatory data inspected: none
+- Confirmatory selection seed: `2026082601`
+- Confirmatory frame exclusion: all source frames represented in the frozen P1
+  selection, including sources used to construct close-contact frames
 
 Any change after freezing must be recorded in a dated amendment before the
 affected result is analyzed.
+
+The confirmatory dataset may be constructed using geometry and FP32 force
+scores only. Its TF32 and BF16 outputs must not be generated or inspected until
+the primary energy and force margins below are frozen in a dated amendment.
+Dataset construction records the P1 exclusion-file checksum and must report
+zero source-frame overlap.
 
 ## Primary research question
 

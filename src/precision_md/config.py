@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class Gate1Config(BaseModel):
+    dataset_id: str = "gate1"
     seed: int = 20260819
     output_dir: Path = Path("results/gate1")
     dataset_dir: Path = Path("data/rmd17")
@@ -23,6 +24,7 @@ class Gate1Config(BaseModel):
     timed_iterations: int = 100
     device: str = "cuda"
     model: str = "small"
+    exclude_selection: Path | None = None
 
     @model_validator(mode="after")
     def totals(self):

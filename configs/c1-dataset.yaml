@@ -1,0 +1,18 @@
+dataset_id: c1-confirmatory
+seed: 2026082601
+output_dir: results/datasets/c1-confirmatory
+dataset_dir: data/rmd17
+exclude_selection: data/frozen/p1/selection.json
+molecules: [ethanol, malonaldehyde, aspirin]
+ordinary_counts: [34, 33, 33]
+candidate_pool: 3000
+high_force_count: 100
+high_force_cap_per_molecule: 40
+close_contact_count: 100
+close_contact_distances: [0.8, 1.0, 1.2]
+policies: [fp32, tf32, bf16_amp]
+batch_sizes: [1, 8, 32]
+warmups: 20
+timed_iterations: 100
+device: cuda
+model: small
