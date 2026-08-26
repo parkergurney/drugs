@@ -1,6 +1,9 @@
 import numpy as np
+import pytest
 
-from precision_md.benchmark import _add_discrepancies, _representative_frames
+from precision_md.benchmark import (
+    _add_discrepancies, _refuse_overwrite, _representative_frames, _trial_paths,
+)
 
 
 def test_representative_frames_span_full_dataset():
@@ -38,3 +41,29 @@ def test_discrepancies_skip_nonfinite_fast_rows():
     ]
 
     assert "energy_error_ev" not in _add_discrepancies(rows, {})[1]
+
+
+def test_trial_paths_isolate_run_and_accept_frozen_frames(tmp_path):
+    class Config:
+        output_dir = tmp_path / "trials"
+
+    frozen = tmp_path / "frames.npz"
+    output, frames = _trial_paths(Config(), frozen, "run-01")
+
+    assert output == tmp_path / "trials" / "run-01"
+    assert frames == frozen
+
+
+def test_benchmark_refuses_to_overwrite_trial(tmp_path):
+    (tmp_path / "timings.parquet").touch()
+
+    with pytest.raises(FileExistsError, match="choose a new --run-id"):
+        _refuse_overwrite(tmp_path)
+
+
+def test_trial_id_cannot_escape_output_directory(tmp_path):
+    class Config:
+        output_dir = tmp_path / "trials"
+
+    with pytest.raises(ValueError, match="one directory name"):
+        _trial_paths(Config(), tmp_path / "frames.npz", "../overwritten")

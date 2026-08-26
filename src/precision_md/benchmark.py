@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import platform
 from pathlib import Path
 
@@ -54,12 +55,45 @@ def _add_discrepancies(rows, forces):
     return rows
 
 
-def run_benchmark(config, allow_gpu=False):
+_BENCHMARK_OUTPUTS = (
+    "evaluations.parquet", "timings.parquet", "forces.zarr", "manifest.json",
+)
+
+
+def _sha256(path):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _trial_paths(config, frames_path=None, run_id=None):
+    if run_id and (Path(run_id).name != run_id or run_id in {".", ".."}):
+        raise ValueError("--run-id must be one directory name without path separators")
+    output_dir = config.output_dir / run_id if run_id else config.output_dir
+    frames_file = Path(frames_path) if frames_path else output_dir / "frames.npz"
+    return output_dir, frames_file
+
+
+def _refuse_overwrite(output_dir):
+    existing = [output_dir / name for name in _BENCHMARK_OUTPUTS
+                if (output_dir / name).exists()]
+    if existing:
+        names = ", ".join(path.name for path in existing)
+        raise FileExistsError(
+            f"benchmark output already exists in {output_dir}: {names}; "
+            "choose a new --run-id"
+        )
+
+
+def run_benchmark(config, allow_gpu=False, frames_path=None, run_id=None,
+                  timing_seed=None):
     if config.device.startswith("cuda") and not allow_gpu:
         raise RuntimeError("GPU benchmark requires explicit --allow-gpu-benchmark")
-    frames_file = config.output_dir / "frames.npz"
+    output_dir, frames_file = _trial_paths(config, frames_path, run_id)
     if not frames_file.exists():
-        raise FileNotFoundError(f"run prepare-data first: {frames_file}")
+        raise FileNotFoundError(f"prepared frames not found: {frames_file}")
     with np.load(frames_file, allow_pickle=True) as data:
         frames = data["frames"].tolist()
     if len(frames) != 300:
@@ -68,8 +102,9 @@ def run_benchmark(config, allow_gpu=False):
     if len(set(frame_ids)) != len(frame_ids):
         raise ValueError("Gate 1 frame IDs must be unique across strata")
 
+    output_dir.mkdir(parents=True, exist_ok=True)
+    _refuse_overwrite(output_dir)
     evaluator = MaceEvaluator(config.model, config.device)
-    config.output_dir.mkdir(parents=True, exist_ok=True)
     rows, timings, forces = [], [], {}
 
     # Numerical characterization uses real disconnected graph batches and
@@ -111,7 +146,8 @@ def run_benchmark(config, allow_gpu=False):
     # Timing uses a fixed representative disconnected graph batch for each
     # workload size. Policies are interleaved per iteration to reduce clock and
     # temperature drift. Graph construction and warm-up are outside samples.
-    rng = np.random.default_rng(config.seed)
+    timing_seed = config.seed if timing_seed is None else timing_seed
+    rng = np.random.default_rng(timing_seed)
     for batch_size in config.batch_sizes:
         sample = _representative_frames(frames, batch_size)
         prepared = evaluator.prepare_batch([_atomic_batch(frame) for frame in sample])
@@ -144,21 +180,25 @@ def run_benchmark(config, allow_gpu=False):
                     flush=True,
                 )
 
-    pd.DataFrame(rows).to_parquet(config.output_dir / "evaluations.parquet", index=False)
-    pd.DataFrame(timings).to_parquet(config.output_dir / "timings.parquet", index=False)
+    pd.DataFrame(rows).to_parquet(output_dir / "evaluations.parquet", index=False)
+    pd.DataFrame(timings).to_parquet(output_dir / "timings.parquet", index=False)
     import zarr
-    store = zarr.open_group(str(config.output_dir / "forces.zarr"), mode="w")
+    store = zarr.open_group(str(output_dir / "forces.zarr"), mode="w")
     for (frame_id, policy), value in forces.items():
         group = store.require_group(policy)
         group.create_dataset(frame_id, data=value, shape=value.shape, dtype="f8")
     manifest = evaluator.manifest() | {
         "seed": config.seed, "platform": platform.platform(), "model": config.model,
+        "timing_seed": timing_seed,
         "accuracy_batch_size": accuracy_batch_size,
         "timing_scope": "prepared disconnected graph batch; model call plus output transfer",
         "genuine_graph_batch": True,
         "warmups": config.warmups, "timed_iterations": config.timed_iterations,
+        "run_id": run_id,
+        "frames_path": str(frames_file),
+        "frames_sha256": _sha256(frames_file),
     }
-    (config.output_dir / "manifest.json").write_text(
+    (output_dir / "manifest.json").write_text(
         json.dumps(manifest, indent=2) + "\n"
     )
-    print(f"Gate 1 benchmark complete in {config.output_dir}", flush=True)
+    print(f"Gate 1 benchmark complete in {output_dir}", flush=True)

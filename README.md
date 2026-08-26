@@ -63,6 +63,36 @@ sequence. Record the Git commit, configuration hash, model hash, environment,
 GPU telemetry, random seed, command, and output checksums for every scientific
 run.
 
+## Running independent trials
+
+Prepare and checksum the 300-frame dataset once. Then point every fresh
+benchmark process at that immutable file, give it a unique run ID, and vary
+only the timing seed used to randomize policy order:
+
+```bash
+uv run precision-md benchmark --config configs/gate1.yaml \
+  --frames results/gate1/frames.npz --run-id c1-run-01 \
+  --timing-seed 2026081901 --allow-gpu-benchmark
+uv run precision-md benchmark --config configs/gate1.yaml \
+  --frames results/gate1/frames.npz --run-id c1-run-02 \
+  --timing-seed 2026081902 --allow-gpu-benchmark
+```
+
+With the committed Gate 1 configuration these write isolated results beneath
+`results/gate1/<run-id>/`. A benchmark refuses to overwrite an existing trial.
+Run additional processes in the same way, then combine them with the
+process-first hierarchical bootstrap:
+
+```bash
+uv run precision-md analyze-trials \
+  --trials results/gate1 --output results/c1-analysis
+```
+
+Every trial manifest records its run ID, timing seed, frozen-frame path and
+SHA-256, and model hash. Multi-trial analysis rejects mixed frame or model
+hashes. Preserve the frozen `frames.npz`, `selection.json`, and
+`candidate_scores.parquet` alongside their checksums.
+
 ## Research provenance
 
 Pilot P1 is documented in

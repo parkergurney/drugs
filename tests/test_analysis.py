@@ -1,6 +1,9 @@
 import numpy as np
+import pandas as pd
 import pytest
-from precision_md.analysis import gate1_pass, speed_ratio_ci
+from precision_md.analysis import (
+    analyze_trials, gate1_pass, hierarchical_speed_ratio_ci, speed_ratio_ci,
+)
 
 
 def test_paired_bootstrap_speedup():
@@ -13,3 +16,50 @@ def test_gate1_conditions():
                "batch1_slowdown":1.0, "discrepancy_above_noise":True}
     assert gate1_pass(summary)
     assert not gate1_pass(summary | {"finite_count":299})
+
+
+def test_hierarchical_bootstrap_uses_process_pairs():
+    pairs = [
+        (np.ones(10) * 2, np.ones(10)),
+        (np.ones(10) * 4, np.ones(10) * 2),
+    ]
+    ratio, ci = hierarchical_speed_ratio_ci(pairs, iterations=100)
+    assert ratio == pytest.approx(2)
+    assert ci == pytest.approx((2, 2))
+
+
+def test_analyze_trials_combines_isolated_processes(tmp_path):
+    trials = tmp_path / "trials"
+    for process_number in (1, 2):
+        trial = trials / f"run-{process_number:02d}"
+        trial.mkdir(parents=True)
+        (trial / "manifest.json").write_text(
+            '{"frames_sha256":"frames", "model_hash":"model"}\n'
+        )
+        evaluations = []
+        for frame_id in ("a", "b"):
+            evaluations += [
+                {"frame_id": frame_id, "policy": "fp32", "finite": True,
+                 "max_force_error_ev_per_a": np.nan},
+                {"frame_id": frame_id, "policy": "tf32", "finite": True,
+                 "max_force_error_ev_per_a": 0.1},
+            ]
+        pd.DataFrame(evaluations).to_parquet(trial / "evaluations.parquet")
+        timings = []
+        for batch_size in (1, 8):
+            for iteration in range(4):
+                timings += [
+                    {"policy": "fp32", "batch_size": batch_size,
+                     "iteration": iteration, "wall_seconds": 2.0, "finite": True},
+                    {"policy": "tf32", "batch_size": batch_size,
+                     "iteration": iteration, "wall_seconds": 1.0, "finite": True},
+                ]
+        pd.DataFrame(timings).to_parquet(trial / "timings.parquet")
+
+    result = analyze_trials(trials, tmp_path / "analysis", iterations=100)
+
+    assert result["process_count"] == 2
+    assert result["policies"]["tf32"]["speedup"] == pytest.approx(2)
+    assert (tmp_path / "analysis" / "analysis.json").exists()
+    combined = pd.read_parquet(tmp_path / "analysis" / "timings.parquet")
+    assert set(combined.process_id) == {"run-01", "run-02"}

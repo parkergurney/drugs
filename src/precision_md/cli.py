@@ -3,7 +3,7 @@ import argparse, json
 from pathlib import Path
 import numpy as np
 import pandas as pd
-from .analysis import analyze_results
+from .analysis import analyze_results, analyze_trials
 from .benchmark import run_benchmark
 from .config import Gate1Config, Gate2Config, load_config
 from .data import Frame, close_contact, ordinary_indices, select_high_force
@@ -91,17 +91,30 @@ def main(argv=None):
     parser = argparse.ArgumentParser(prog="precision-md"); sub = parser.add_subparsers(dest="command", required=True)
     for name in ("prepare-data", "benchmark", "prepare-trajectory", "fork-segments"):
         p = sub.add_parser(name); p.add_argument("--config", required=True)
-        if name == "benchmark": p.add_argument("--allow-gpu-benchmark", action="store_true")
+        if name == "benchmark":
+            p.add_argument("--allow-gpu-benchmark", action="store_true")
+            p.add_argument("--frames", help="path to one frozen frames.npz")
+            p.add_argument("--run-id", help="unique subdirectory under config output_dir")
+            p.add_argument("--timing-seed", type=int,
+                           help="policy-order seed, independent of frame selection")
     p = sub.add_parser("analyze"); p.add_argument("--results", required=True)
+    p = sub.add_parser("analyze-trials")
+    p.add_argument("--trials", required=True)
+    p.add_argument("--output", required=True)
     p = sub.add_parser("render-report"); p.add_argument("--results", required=True); p.add_argument("--output", required=True)
     args = parser.parse_args(argv)
     if args.command == "prepare-data": prepare_data(load_config(args.config, Gate1Config))
-    elif args.command == "benchmark": run_benchmark(load_config(args.config, Gate1Config), args.allow_gpu_benchmark)
+    elif args.command == "benchmark":
+        run_benchmark(load_config(args.config, Gate1Config),
+                      args.allow_gpu_benchmark, args.frames, args.run_id,
+                      args.timing_seed)
     elif args.command in ("prepare-trajectory", "fork-segments"):
         config = load_config(args.config, Gate2Config)
         from .gpu_workflow import fork_segments, prepare_trajectory
         (prepare_trajectory if args.command == "prepare-trajectory" else fork_segments)(config)
     elif args.command == "analyze": print(json.dumps(analyze_results(args.results), indent=2))
+    elif args.command == "analyze-trials":
+        print(json.dumps(analyze_trials(args.trials, args.output), indent=2))
     elif args.command == "render-report": render_report(args.results, args.output)
 
 

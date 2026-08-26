@@ -16,6 +16,136 @@ def speed_ratio_ci(reference, fast, iterations=2000, seed=20260819):
     return float(np.mean(reference) / np.mean(fast)), tuple(np.quantile(ratios, [.025, .975]))
 
 
+def hierarchical_speed_ratio_ci(pairs, iterations=2000, seed=20260819):
+    """Bootstrap paired timings by process, then by iteration within process."""
+    normalized = []
+    for reference, fast in pairs:
+        reference, fast = np.asarray(reference), np.asarray(fast)
+        if not len(reference) or len(reference) != len(fast):
+            raise ValueError("each process must contain matched paired timings")
+        normalized.append((reference, fast))
+    if not normalized:
+        raise ValueError("at least one process is required")
+    point = np.concatenate([pair[0] for pair in normalized]).mean() / np.concatenate(
+        [pair[1] for pair in normalized]
+    ).mean()
+    rng, ratios = np.random.default_rng(seed), []
+    for _ in range(iterations):
+        sampled_processes = rng.integers(0, len(normalized), len(normalized))
+        references, fast_values = [], []
+        for process_index in sampled_processes:
+            reference, fast = normalized[process_index]
+            sample = rng.integers(0, len(reference), len(reference))
+            references.append(reference[sample])
+            fast_values.append(fast[sample])
+        ratios.append(
+            np.concatenate(references).mean() / np.concatenate(fast_values).mean()
+        )
+    return float(point), tuple(np.quantile(ratios, [.025, .975]))
+
+
+def _paired_process_timings(timings, policy, batch_size):
+    pairs = []
+    for _, process in timings.groupby("process_id", sort=True):
+        reference = process[
+            (process.policy == "fp32") & (process.batch_size == batch_size)
+            & process.finite
+        ][["iteration", "wall_seconds"]]
+        fast = process[
+            (process.policy == policy) & (process.batch_size == batch_size)
+            & process.finite
+        ][["iteration", "wall_seconds"]]
+        paired = reference.merge(fast, on="iteration", suffixes=("_ref", "_fast"))
+        if len(paired) != len(reference) or len(paired) != len(fast):
+            raise ValueError(
+                f"unpaired finite timings for {policy}, batch {batch_size}"
+            )
+        pairs.append((paired.wall_seconds_ref.to_numpy(),
+                      paired.wall_seconds_fast.to_numpy()))
+    return pairs
+
+
+def analyze_trials(trials_root, output_root, iterations=2000, seed=20260819):
+    """Combine isolated benchmark processes and analyze process-level replication."""
+    trials_root, output_root = Path(trials_root), Path(output_root)
+    trial_dirs = sorted(path.parent for path in trials_root.glob("*/manifest.json"))
+    if not trial_dirs:
+        raise FileNotFoundError(f"no trial manifests found under {trials_root}")
+    evaluations, timings, manifests = [], [], []
+    for trial_dir in trial_dirs:
+        process_id = trial_dir.name
+        required = [trial_dir / "evaluations.parquet", trial_dir / "timings.parquet"]
+        missing = [str(path) for path in required if not path.exists()]
+        if missing:
+            raise FileNotFoundError(f"incomplete trial {process_id}: {', '.join(missing)}")
+        manifest = json.loads((trial_dir / "manifest.json").read_text())
+        manifests.append((process_id, manifest))
+        evaluation = pd.read_parquet(required[0]).assign(process_id=process_id)
+        timing = pd.read_parquet(required[1]).assign(process_id=process_id)
+        evaluations.append(evaluation); timings.append(timing)
+    frame_hashes = {manifest.get("frames_sha256") for _, manifest in manifests}
+    if None in frame_hashes or len(frame_hashes) != 1:
+        raise ValueError("all trials must declare the same frames_sha256")
+    model_hashes = {manifest.get("model_hash") for _, manifest in manifests}
+    if None in model_hashes or len(model_hashes) != 1:
+        raise ValueError("all trials must use the same model_hash")
+    evaluations, timings = pd.concat(evaluations, ignore_index=True), pd.concat(
+        timings, ignore_index=True
+    )
+    policies = sorted(set(evaluations.policy) - {"fp32"})
+    summaries = {}
+    for policy in policies:
+        choices = []
+        for batch_size in sorted(set(timings.batch_size) - {1}):
+            pairs = _paired_process_timings(timings, policy, batch_size)
+            ratio, interval = hierarchical_speed_ratio_ci(
+                pairs, iterations=iterations, seed=seed + int(batch_size)
+            )
+            choices.append((ratio, interval, int(batch_size)))
+        ratio, interval, batch_size = max(choices, default=(0, (0, 0), None))
+        batch1 = _paired_process_timings(timings, policy, 1)
+        batch1_reference = np.concatenate([pair[0] for pair in batch1])
+        batch1_fast = np.concatenate([pair[1] for pair in batch1])
+        policy_evaluations = evaluations[evaluations.policy == policy]
+        force_errors = (
+            policy_evaluations["max_force_error_ev_per_a"].to_numpy(dtype=float)
+            if "max_force_error_ev_per_a" in policy_evaluations else np.array([])
+        )
+        item = {
+            "process_count": len(trial_dirs),
+            "finite_count": int(policy_evaluations.finite.sum()),
+            "total_count": int(len(policy_evaluations)),
+            "all_processes_finite": bool(policy_evaluations.finite.all()),
+            "speedup": ratio,
+            "speedup_ci_low": interval[0],
+            "speedup_ci_high": interval[1],
+            "winning_batch_size": batch_size,
+            "batch1_slowdown": float(batch1_fast.mean() / batch1_reference.mean()),
+            "max_force_error_ev_per_a": float(np.nanmax(force_errors, initial=0)),
+            "mean_max_force_error_ev_per_a": (
+                float(np.nanmean(force_errors)) if len(force_errors) else np.nan
+            ),
+        }
+        item["passes"] = (
+            item["all_processes_finite"] and item["speedup"] >= 1.2
+            and item["speedup_ci_low"] > 1.0 and item["batch1_slowdown"] <= 1.05
+        )
+        summaries[policy] = item
+    output = {
+        "analysis_type": "hierarchical_process_bootstrap",
+        "process_ids": [path.name for path in trial_dirs],
+        "process_count": len(trial_dirs),
+        "frames_sha256": next(iter(frame_hashes)),
+        "model_hash": next(iter(model_hashes)),
+        "policies": summaries,
+    }
+    output_root.mkdir(parents=True, exist_ok=True)
+    evaluations.to_parquet(output_root / "evaluations.parquet", index=False)
+    timings.to_parquet(output_root / "timings.parquet", index=False)
+    (output_root / "analysis.json").write_text(json.dumps(output, indent=2) + "\n")
+    return output
+
+
 def gate1_pass(summary):
     return (summary["finite_count"] == 300 and summary["total_count"] == 300
             and summary["speedup"] >= 1.2 and summary["speedup_ci_low"] > 1.0
