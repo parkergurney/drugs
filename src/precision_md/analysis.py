@@ -47,16 +47,21 @@ def _paired_process_timings(timings, policy, batch_size):
     for _, process in timings.groupby("process_id", sort=True):
         reference = process[
             (process.policy == "fp32") & (process.batch_size == batch_size)
-            & process.finite
         ][["iteration", "wall_seconds"]]
         fast = process[
             (process.policy == policy) & (process.batch_size == batch_size)
-            & process.finite
         ][["iteration", "wall_seconds"]]
         paired = reference.merge(fast, on="iteration", suffixes=("_ref", "_fast"))
         if len(paired) != len(reference) or len(paired) != len(fast):
             raise ValueError(
-                f"unpaired finite timings for {policy}, batch {batch_size}"
+                f"structurally unpaired timings for {policy}, batch {batch_size}"
+            )
+        wall_values = paired[["wall_seconds_ref", "wall_seconds_fast"]].to_numpy(
+            dtype=float
+        )
+        if not np.isfinite(wall_values).all() or (wall_values <= 0).any():
+            raise ValueError(
+                f"invalid wall-clock timings for {policy}, batch {batch_size}"
             )
         pairs.append((paired.wall_seconds_ref.to_numpy(),
                       paired.wall_seconds_fast.to_numpy()))
@@ -148,6 +153,11 @@ def analyze_trials(trials_root, output_root, iterations=2000, seed=20260819):
             )
             per_process = []
             for (process_id, _), (reference, fast) in zip(manifests, pairs, strict=True):
+                process_timing = timings[
+                    (timings.process_id == process_id)
+                    & (timings.policy == policy)
+                    & (timings.batch_size == batch_size)
+                ]
                 process_speedup = float(reference.mean() / fast.mean())
                 per_process.append(process_speedup)
                 process_rows.append({
@@ -156,7 +166,12 @@ def analyze_trials(trials_root, output_root, iterations=2000, seed=20260819):
                     "reference_mean_seconds": float(reference.mean()),
                     "policy_mean_seconds": float(fast.mean()),
                     "paired_iterations": len(reference),
+                    "output_finite_count": int(process_timing.finite.sum()),
+                    "output_total_count": len(process_timing),
                 })
+            policy_timing = timings[
+                (timings.policy == policy) & (timings.batch_size == batch_size)
+            ]
             performance_rows.append({
                 "policy": policy, "batch_size": int(batch_size),
                 "process_count": len(pairs), "speedup": ratio,
@@ -165,6 +180,9 @@ def analyze_trials(trials_root, output_root, iterations=2000, seed=20260819):
                 if len(per_process) > 1 else 0.0,
                 "process_speedup_min": float(np.min(per_process)),
                 "process_speedup_max": float(np.max(per_process)),
+                "output_finite_count": int(policy_timing.finite.sum()),
+                "output_total_count": len(policy_timing),
+                "all_timed_outputs_finite": bool(policy_timing.finite.all()),
             })
             if batch_size != 1:
                 choices.append((ratio, interval, int(batch_size)))
@@ -177,6 +195,7 @@ def analyze_trials(trials_root, output_root, iterations=2000, seed=20260819):
             policy_evaluations["max_force_error_ev_per_a"].to_numpy(dtype=float)
             if "max_force_error_ev_per_a" in policy_evaluations else np.array([])
         )
+        finite_force_errors = force_errors[np.isfinite(force_errors)]
         item = {
             "process_count": len(trial_dirs),
             "finite_count": int(policy_evaluations.finite.sum()),
@@ -189,7 +208,7 @@ def analyze_trials(trials_root, output_root, iterations=2000, seed=20260819):
             "batch1_slowdown": float(batch1_fast.mean() / batch1_reference.mean()),
             "max_force_error_ev_per_a": float(np.nanmax(force_errors, initial=0)),
             "mean_max_force_error_ev_per_a": (
-                float(np.nanmean(force_errors)) if len(force_errors) else np.nan
+                float(finite_force_errors.mean()) if len(finite_force_errors) else np.nan
             ),
         }
         item["passes"] = (
@@ -199,6 +218,14 @@ def analyze_trials(trials_root, output_root, iterations=2000, seed=20260819):
         summaries[policy] = item
     output = {
         "analysis_type": "hierarchical_process_bootstrap",
+        "timing_validity_rule": (
+            "pair completed measurements by process/batch/iteration; require positive "
+            "finite wall time; report model-output finiteness separately"
+        ),
+        "analysis_amendment": (
+            "studies/confirmatory-c1/amendments/"
+            "2026-08-27-timing-output-validity.md"
+        ),
         "process_ids": [path.name for path in trial_dirs],
         "process_count": len(trial_dirs),
         **invariants,
