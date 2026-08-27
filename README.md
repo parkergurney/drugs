@@ -89,15 +89,42 @@ uv run precision-md analyze-trials \
 ```
 
 Every trial manifest records its run ID, timing seed, frozen-frame path and
-SHA-256, and model hash. Multi-trial analysis rejects mixed frame or model
-hashes. Preserve the frozen `frames.npz`, `selection.json`, and
-`candidate_scores.parquet` alongside their checksums.
+SHA-256, experiment/config/Git provenance, and model hash. Multi-trial analysis
+rejects mixed frame, model, configuration, dataset, or experiment hashes. When
+`--run-id` is used, the benchmark copies the canonical `frames.npz` into the
+trial and verifies its hash.
 
-On an A40, `scripts/run-a40-c1-reproduction.sh` performs all five isolated P1
-reproduction processes, samples GPU telemetry once per second, verifies the
-frozen frame and model hashes, and runs the combined analysis. It refuses a
-dirty tracked worktree, a non-A40 GPU, an altered P1 frame file, or an existing
-trial result.
+Create a portable immutable dataset bundle with:
+
+```bash
+uv run precision-md freeze-dataset \
+  --source data/frozen/p1 --output artifacts/datasets/p1 \
+  --dataset-id p1 --provenance studies/pilot-p1-a40/manifest.json
+uv run precision-md validate-dataset \
+  --dataset artifacts/datasets/p1 --dataset-id p1
+```
+
+Each bundle contains `frames.npz`, `selection.json`,
+`candidate_scores.parquet`, `manifest.json`, and `SHA256SUMS`. Freezing is
+atomic and idempotent for matching content and refuses to replace a different
+dataset.
+
+On an A40, `scripts/run-a40-c1-reproduction.sh` performs the guarded complete
+workflow: it imports P1, prepares and freezes the disjoint C1 dataset once,
+packages C1 immediately, runs all five isolated P1 reproduction processes
+sequentially, samples GPU telemetry once per second, analyzes the trials, and
+packages the result tree. Complete verified trials are resumable; partial or
+inconsistent trials are never overwritten. It refuses a dirty tracked
+worktree, a non-A40 GPU, altered inputs, or inconsistent artifacts.
+
+```text
+artifacts/
+  datasets/{p1,c1}/
+  trials/c1-reproduction/c1-run-*/
+  analysis/c1-reproduction/
+  system/
+  bundles/
+```
 
 ## Preparing the sealed C1 dataset
 
@@ -110,11 +137,19 @@ frame represented in P1:
 uv run precision-md prepare-data --config configs/c1-dataset.yaml
 ```
 
-This writes `results/datasets/c1-confirmatory/`, including a dataset manifest
+This writes the resumable staging directory
+`results/datasets/c1-confirmatory/`, including a dataset manifest
 with source-data, selection, frame, model, and exclusion checksums. Preparation
 fails on any P1 source-frame overlap. C1 preparation uses FP32 scoring only;
 do not benchmark this dataset under TF32 or BF16 until the confirmatory energy
-and force margins are frozen in a dated protocol amendment.
+and force margins are frozen in a dated protocol amendment. Freeze the
+completed staging directory with:
+
+```bash
+uv run precision-md freeze-dataset \
+  --source results/datasets/c1-confirmatory \
+  --output artifacts/datasets/c1 --dataset-id c1-confirmatory
+```
 
 ## Research provenance
 

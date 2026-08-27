@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import hashlib
 import platform
+import shutil
+import subprocess
 from pathlib import Path
 
 import numpy as np
@@ -87,13 +89,44 @@ def _refuse_overwrite(output_dir):
         )
 
 
+def _git_commit():
+    try:
+        return subprocess.run(
+            ["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
+def _materialize_trial_frames(output_dir, source):
+    """Put a verified frame copy in a trial so the directory is self-contained."""
+    source = Path(source).resolve()
+    destination = (Path(output_dir) / "frames.npz").resolve()
+    if source == destination:
+        return destination, source, _sha256(source)
+    source_hash = _sha256(source)
+    if destination.exists():
+        if _sha256(destination) != source_hash:
+            raise FileExistsError(f"trial frame copy differs from canonical dataset: {destination}")
+    else:
+        temporary = destination.with_suffix(".npz.tmp")
+        shutil.copy2(source, temporary)
+        temporary.replace(destination)
+    return destination, source, source_hash
+
+
 def run_benchmark(config, allow_gpu=False, frames_path=None, run_id=None,
-                  timing_seed=None):
+                  timing_seed=None, experiment_id=None, command=None):
     if config.device.startswith("cuda") and not allow_gpu:
         raise RuntimeError("GPU benchmark requires explicit --allow-gpu-benchmark")
-    output_dir, frames_file = _trial_paths(config, frames_path, run_id)
-    if not frames_file.exists():
-        raise FileNotFoundError(f"prepared frames not found: {frames_file}")
+    output_dir, source_frames = _trial_paths(config, frames_path, run_id)
+    if not source_frames.exists():
+        raise FileNotFoundError(f"prepared frames not found: {source_frames}")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    _refuse_overwrite(output_dir)
+    frames_file, canonical_frames, canonical_hash = _materialize_trial_frames(
+        output_dir, source_frames
+    )
     with np.load(frames_file, allow_pickle=True) as data:
         frames = data["frames"].tolist()
     if len(frames) != 300:
@@ -102,8 +135,6 @@ def run_benchmark(config, allow_gpu=False, frames_path=None, run_id=None,
     if len(set(frame_ids)) != len(frame_ids):
         raise ValueError("Gate 1 frame IDs must be unique across strata")
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    _refuse_overwrite(output_dir)
     evaluator = MaceEvaluator(config.model, config.device)
     rows, timings, forces = [], [], {}
 
@@ -187,15 +218,26 @@ def run_benchmark(config, allow_gpu=False, frames_path=None, run_id=None,
     for (frame_id, policy), value in forces.items():
         group = store.require_group(policy)
         group.create_dataset(frame_id, data=value, shape=value.shape, dtype="f8")
+    config_json = json.dumps(config.model_dump(mode="json"), sort_keys=True)
     manifest = evaluator.manifest() | {
+        "schema_version": 2,
+        "experiment_id": experiment_id,
+        "dataset_id": config.dataset_id,
         "seed": config.seed, "platform": platform.platform(), "model": config.model,
+        "git_commit": _git_commit(),
+        "config_sha256": hashlib.sha256(config_json.encode()).hexdigest(),
+        "command": command,
         "timing_seed": timing_seed,
+        "policies": list(config.policies),
+        "batch_sizes": list(config.batch_sizes),
         "accuracy_batch_size": accuracy_batch_size,
         "timing_scope": "prepared disconnected graph batch; model call plus output transfer",
         "genuine_graph_batch": True,
         "warmups": config.warmups, "timed_iterations": config.timed_iterations,
         "run_id": run_id,
         "frames_path": str(frames_file),
+        "canonical_frames_path": str(canonical_frames),
+        "canonical_frames_sha256": canonical_hash,
         "frames_sha256": _sha256(frames_file),
     }
     (output_dir / "manifest.json").write_text(

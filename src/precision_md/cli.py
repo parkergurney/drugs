@@ -1,5 +1,5 @@
 from __future__ import annotations
-import argparse, json
+import argparse, json, shlex, sys
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -13,6 +13,7 @@ from .data import (
 from .model import MaceEvaluator
 from .types import AtomicBatch
 from .report import render_report
+from .artifacts import freeze_dataset, validate_frozen_dataset, validate_trial
 
 
 def prepare_data(config):
@@ -161,17 +162,32 @@ def main(argv=None):
             p.add_argument("--run-id", help="unique subdirectory under config output_dir")
             p.add_argument("--timing-seed", type=int,
                            help="policy-order seed, independent of frame selection")
+            p.add_argument("--experiment-id",
+                           help="prospective experiment identifier recorded in manifest")
     p = sub.add_parser("analyze"); p.add_argument("--results", required=True)
     p = sub.add_parser("analyze-trials")
     p.add_argument("--trials", required=True)
     p.add_argument("--output", required=True)
+    p = sub.add_parser("freeze-dataset")
+    p.add_argument("--source", required=True)
+    p.add_argument("--output", required=True)
+    p.add_argument("--dataset-id", required=True)
+    p.add_argument("--provenance")
+    p = sub.add_parser("validate-dataset")
+    p.add_argument("--dataset", required=True)
+    p.add_argument("--dataset-id")
+    p = sub.add_parser("validate-trial")
+    p.add_argument("--trial", required=True)
+    p.add_argument("--dataset", required=True)
+    p.add_argument("--experiment-id")
     p = sub.add_parser("render-report"); p.add_argument("--results", required=True); p.add_argument("--output", required=True)
     args = parser.parse_args(argv)
     if args.command == "prepare-data": prepare_data(load_config(args.config, Gate1Config))
     elif args.command == "benchmark":
         run_benchmark(load_config(args.config, Gate1Config),
                       args.allow_gpu_benchmark, args.frames, args.run_id,
-                      args.timing_seed)
+                      args.timing_seed, args.experiment_id,
+                      shlex.join(["precision-md", *(argv if argv is not None else sys.argv[1:])]))
     elif args.command in ("prepare-trajectory", "fork-segments"):
         config = load_config(args.config, Gate2Config)
         from .gpu_workflow import fork_segments, prepare_trajectory
@@ -179,6 +195,14 @@ def main(argv=None):
     elif args.command == "analyze": print(json.dumps(analyze_results(args.results), indent=2))
     elif args.command == "analyze-trials":
         print(json.dumps(analyze_trials(args.trials, args.output), indent=2))
+    elif args.command == "freeze-dataset":
+        print(json.dumps(freeze_dataset(args.source, args.output, args.dataset_id,
+                                        args.provenance), indent=2))
+    elif args.command == "validate-dataset":
+        print(json.dumps(validate_frozen_dataset(args.dataset, args.dataset_id), indent=2))
+    elif args.command == "validate-trial":
+        print(json.dumps(validate_trial(args.trial, args.dataset,
+                                        args.experiment_id), indent=2))
     elif args.command == "render-report": render_report(args.results, args.output)
 
 

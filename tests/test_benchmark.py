@@ -2,7 +2,8 @@ import numpy as np
 import pytest
 
 from precision_md.benchmark import (
-    _add_discrepancies, _refuse_overwrite, _representative_frames, _trial_paths,
+    _add_discrepancies, _materialize_trial_frames, _refuse_overwrite,
+    _representative_frames, _trial_paths,
 )
 
 
@@ -67,3 +68,17 @@ def test_trial_id_cannot_escape_output_directory(tmp_path):
 
     with pytest.raises(ValueError, match="one directory name"):
         _trial_paths(Config(), tmp_path / "frames.npz", "../overwritten")
+
+
+def test_trial_materializes_verified_frame_copy(tmp_path):
+    source = tmp_path / "canonical.npz"
+    source.write_bytes(b"frozen")
+    trial = tmp_path / "trial"
+    trial.mkdir()
+
+    local, canonical, digest = _materialize_trial_frames(trial, source)
+
+    assert local == (trial / "frames.npz").resolve()
+    assert canonical == source.resolve()
+    assert local.read_bytes() == b"frozen"
+    assert len(digest) == 64

@@ -34,15 +34,19 @@ def test_analyze_trials_combines_isolated_processes(tmp_path):
         trial = trials / f"run-{process_number:02d}"
         trial.mkdir(parents=True)
         (trial / "manifest.json").write_text(
-            '{"frames_sha256":"frames", "model_hash":"model"}\n'
+            '{"frames_sha256":"frames", "model_hash":"model", '
+            '"config_sha256":"config", "dataset_id":"p1", '
+            '"experiment_id":"c1"}\n'
         )
         evaluations = []
         for frame_id in ("a", "b"):
             evaluations += [
                 {"frame_id": frame_id, "policy": "fp32", "finite": True,
-                 "max_force_error_ev_per_a": np.nan},
+                 "molecule": "ethanol", "stratum": "ordinary",
+                 "max_force_error_ev_per_a": np.nan, "energy_error_ev": np.nan},
                 {"frame_id": frame_id, "policy": "tf32", "finite": True,
-                 "max_force_error_ev_per_a": 0.1},
+                 "molecule": "ethanol", "stratum": "ordinary",
+                 "max_force_error_ev_per_a": 0.1, "energy_error_ev": 0.2},
             ]
         pd.DataFrame(evaluations).to_parquet(trial / "evaluations.parquet")
         timings = []
@@ -55,11 +59,28 @@ def test_analyze_trials_combines_isolated_processes(tmp_path):
                      "iteration": iteration, "wall_seconds": 1.0, "finite": True},
                 ]
         pd.DataFrame(timings).to_parquet(trial / "timings.parquet")
+        (trial / "gpu-telemetry.csv").write_text(
+            "name, temperature.gpu, utilization.gpu, power.draw\n"
+            "NVIDIA A40, 55 C, 80 %, 250 W\n"
+        )
 
     result = analyze_trials(trials, tmp_path / "analysis", iterations=100)
 
     assert result["process_count"] == 2
     assert result["policies"]["tf32"]["speedup"] == pytest.approx(2)
     assert (tmp_path / "analysis" / "analysis.json").exists()
+    assert (tmp_path / "analysis" / "process-speedups.parquet").exists()
+    assert (tmp_path / "analysis" / "finite-counts.parquet").exists()
     combined = pd.read_parquet(tmp_path / "analysis" / "timings.parquet")
     assert set(combined.process_id) == {"run-01", "run-02"}
+    assert result["gpu_conditions"]["gpu_names"] == ["NVIDIA A40"]
+    assert result["gpu_conditions"]["deviations"] == []
+
+
+def test_hierarchical_point_estimate_weights_processes_equally():
+    pairs = [
+        (np.array([2.0]), np.array([1.0])),
+        (np.ones(100) * 3.0, np.ones(100) * 2.0),
+    ]
+    ratio, _ = hierarchical_speed_ratio_ci(pairs, iterations=50)
+    assert ratio == pytest.approx(2.5 / 1.5)

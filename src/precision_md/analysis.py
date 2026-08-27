@@ -26,9 +26,9 @@ def hierarchical_speed_ratio_ci(pairs, iterations=2000, seed=20260819):
         normalized.append((reference, fast))
     if not normalized:
         raise ValueError("at least one process is required")
-    point = np.concatenate([pair[0] for pair in normalized]).mean() / np.concatenate(
-        [pair[1] for pair in normalized]
-    ).mean()
+    point = np.mean([pair[0].mean() for pair in normalized]) / np.mean(
+        [pair[1].mean() for pair in normalized]
+    )
     rng, ratios = np.random.default_rng(seed), []
     for _ in range(iterations):
         sampled_processes = rng.integers(0, len(normalized), len(normalized))
@@ -36,11 +36,9 @@ def hierarchical_speed_ratio_ci(pairs, iterations=2000, seed=20260819):
         for process_index in sampled_processes:
             reference, fast = normalized[process_index]
             sample = rng.integers(0, len(reference), len(reference))
-            references.append(reference[sample])
-            fast_values.append(fast[sample])
-        ratios.append(
-            np.concatenate(references).mean() / np.concatenate(fast_values).mean()
-        )
+            references.append(reference[sample].mean())
+            fast_values.append(fast[sample].mean())
+        ratios.append(np.mean(references) / np.mean(fast_values))
     return float(point), tuple(np.quantile(ratios, [.025, .975]))
 
 
@@ -65,6 +63,46 @@ def _paired_process_timings(timings, policy, batch_size):
     return pairs
 
 
+def _telemetry_rows(process_id, paths):
+    rows, gpu_names = [], set()
+    for path in paths:
+        try:
+            table = pd.read_csv(path)
+        except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError):
+            continue
+        columns = {str(column).strip().lower(): column for column in table.columns}
+        for normalized, original in columns.items():
+            if normalized.startswith("name"):
+                gpu_names.update(table[original].dropna().astype(str).str.strip())
+        metrics = {
+            "temperature_c": "temperature.gpu",
+            "utilization_percent": "utilization.gpu",
+            "power_w": "power.draw",
+            "sm_clock_mhz": "clocks.sm",
+            "memory_clock_mhz": "clocks.mem",
+            "memory_used_mib": "memory.used",
+        }
+        for metric, prefix in metrics.items():
+            original = next(
+                (column for normalized, column in columns.items()
+                 if normalized.startswith(prefix)), None
+            )
+            if original is None:
+                continue
+            numeric = pd.to_numeric(
+                table[original].astype(str).str.extract(r"([-+]?\d+(?:\.\d+)?)")[0],
+                errors="coerce",
+            ).dropna()
+            if len(numeric):
+                rows.append({
+                    "process_id": process_id, "source_file": path.name,
+                    "metric": metric, "sample_count": len(numeric),
+                    "minimum": float(numeric.min()), "mean": float(numeric.mean()),
+                    "maximum": float(numeric.max()),
+                })
+    return rows, sorted(gpu_names)
+
+
 def analyze_trials(trials_root, output_root, iterations=2000, seed=20260819):
     """Combine isolated benchmark processes and analyze process-level replication."""
     trials_root, output_root = Path(trials_root), Path(output_root)
@@ -83,29 +121,57 @@ def analyze_trials(trials_root, output_root, iterations=2000, seed=20260819):
         evaluation = pd.read_parquet(required[0]).assign(process_id=process_id)
         timing = pd.read_parquet(required[1]).assign(process_id=process_id)
         evaluations.append(evaluation); timings.append(timing)
-    frame_hashes = {manifest.get("frames_sha256") for _, manifest in manifests}
-    if None in frame_hashes or len(frame_hashes) != 1:
-        raise ValueError("all trials must declare the same frames_sha256")
-    model_hashes = {manifest.get("model_hash") for _, manifest in manifests}
-    if None in model_hashes or len(model_hashes) != 1:
-        raise ValueError("all trials must use the same model_hash")
+    invariant_fields = {
+        "frames_sha256": "all trials must declare the same frames_sha256",
+        "model_hash": "all trials must use the same model_hash",
+        "config_sha256": "all trials must use the same config_sha256",
+        "dataset_id": "all trials must use the same dataset_id",
+        "experiment_id": "all trials must use the same experiment_id",
+    }
+    invariants = {}
+    for field, message in invariant_fields.items():
+        values = {manifest.get(field) for _, manifest in manifests}
+        if None in values or len(values) != 1:
+            raise ValueError(message)
+        invariants[field] = next(iter(values))
     evaluations, timings = pd.concat(evaluations, ignore_index=True), pd.concat(
         timings, ignore_index=True
     )
     policies = sorted(set(evaluations.policy) - {"fp32"})
-    summaries = {}
+    summaries, performance_rows, process_rows = {}, [], []
     for policy in policies:
         choices = []
-        for batch_size in sorted(set(timings.batch_size) - {1}):
+        for batch_size in sorted(set(timings.batch_size)):
             pairs = _paired_process_timings(timings, policy, batch_size)
             ratio, interval = hierarchical_speed_ratio_ci(
                 pairs, iterations=iterations, seed=seed + int(batch_size)
             )
-            choices.append((ratio, interval, int(batch_size)))
+            per_process = []
+            for (process_id, _), (reference, fast) in zip(manifests, pairs, strict=True):
+                process_speedup = float(reference.mean() / fast.mean())
+                per_process.append(process_speedup)
+                process_rows.append({
+                    "process_id": process_id, "policy": policy,
+                    "batch_size": int(batch_size), "speedup": process_speedup,
+                    "reference_mean_seconds": float(reference.mean()),
+                    "policy_mean_seconds": float(fast.mean()),
+                    "paired_iterations": len(reference),
+                })
+            performance_rows.append({
+                "policy": policy, "batch_size": int(batch_size),
+                "process_count": len(pairs), "speedup": ratio,
+                "speedup_ci_low": interval[0], "speedup_ci_high": interval[1],
+                "process_speedup_std": float(np.std(per_process, ddof=1))
+                if len(per_process) > 1 else 0.0,
+                "process_speedup_min": float(np.min(per_process)),
+                "process_speedup_max": float(np.max(per_process)),
+            })
+            if batch_size != 1:
+                choices.append((ratio, interval, int(batch_size)))
         ratio, interval, batch_size = max(choices, default=(0, (0, 0), None))
         batch1 = _paired_process_timings(timings, policy, 1)
-        batch1_reference = np.concatenate([pair[0] for pair in batch1])
-        batch1_fast = np.concatenate([pair[1] for pair in batch1])
+        batch1_reference = np.array([pair[0].mean() for pair in batch1])
+        batch1_fast = np.array([pair[1].mean() for pair in batch1])
         policy_evaluations = evaluations[evaluations.policy == policy]
         force_errors = (
             policy_evaluations["max_force_error_ev_per_a"].to_numpy(dtype=float)
@@ -135,13 +201,92 @@ def analyze_trials(trials_root, output_root, iterations=2000, seed=20260819):
         "analysis_type": "hierarchical_process_bootstrap",
         "process_ids": [path.name for path in trial_dirs],
         "process_count": len(trial_dirs),
-        "frames_sha256": next(iter(frame_hashes)),
-        "model_hash": next(iter(model_hashes)),
+        **invariants,
         "policies": summaries,
+        "performance": performance_rows,
     }
     output_root.mkdir(parents=True, exist_ok=True)
     evaluations.to_parquet(output_root / "evaluations.parquet", index=False)
     timings.to_parquet(output_root / "timings.parquet", index=False)
+    pd.DataFrame(performance_rows).to_parquet(
+        output_root / "performance.parquet", index=False
+    )
+    pd.DataFrame(process_rows).to_parquet(
+        output_root / "process-speedups.parquet", index=False
+    )
+    finite_counts = evaluations.groupby(
+        ["process_id", "policy", "stratum"], dropna=False
+    ).agg(total_count=("finite", "size"), finite_count=("finite", "sum")).reset_index()
+    finite_counts["nonfinite_count"] = (
+        finite_counts.total_count - finite_counts.finite_count
+    )
+    finite_counts.to_parquet(output_root / "finite-counts.parquet", index=False)
+    error_rows = evaluations[evaluations.policy != "fp32"].copy()
+    error_summaries = []
+    for keys, group in error_rows.groupby(
+        ["process_id", "policy", "molecule", "stratum"], dropna=False
+    ):
+        energy = group.get("energy_error_ev", pd.Series(dtype=float)).to_numpy(dtype=float)
+        force = group.get(
+            "max_force_error_ev_per_a", pd.Series(dtype=float)
+        ).to_numpy(dtype=float)
+        finite_energy, finite_force = energy[np.isfinite(energy)], force[np.isfinite(force)]
+        error_summaries.append({
+            **dict(zip(("process_id", "policy", "molecule", "stratum"), keys)),
+            "count": len(group),
+            "finite_count": int(group.finite.sum()),
+            "energy_abs_mean_ev": float(np.mean(np.abs(finite_energy)))
+            if len(finite_energy) else np.nan,
+            "energy_abs_max_ev": float(np.max(np.abs(finite_energy)))
+            if len(finite_energy) else np.nan,
+            "force_mean_ev_per_a": float(np.mean(finite_force))
+            if len(finite_force) else np.nan,
+            "force_p95_ev_per_a": float(np.quantile(finite_force, .95))
+            if len(finite_force) else np.nan,
+            "force_max_ev_per_a": float(np.max(finite_force))
+            if len(finite_force) else np.nan,
+        })
+    pd.DataFrame(error_summaries).to_parquet(
+        output_root / "error-summary.parquet", index=False
+    )
+    telemetry, telemetry_metrics, all_gpu_names = [], [], set()
+    for trial_dir in trial_dirs:
+        paths = sorted(trial_dir.glob("gpu-*.csv"))
+        metric_rows, gpu_names = _telemetry_rows(trial_dir.name, paths)
+        telemetry_metrics.extend(metric_rows)
+        all_gpu_names.update(gpu_names)
+        telemetry.append({
+            "process_id": trial_dir.name,
+            "telemetry_file_count": len(paths),
+            "telemetry_present": bool(paths),
+            "telemetry_files": json.dumps([path.name for path in paths]),
+        })
+    pd.DataFrame(telemetry).to_parquet(
+        output_root / "telemetry-summary.parquet", index=False
+    )
+    pd.DataFrame(
+        telemetry_metrics,
+        columns=("process_id", "source_file", "metric", "sample_count",
+                 "minimum", "mean", "maximum"),
+    ).to_parquet(output_root / "telemetry-metrics.parquet", index=False)
+    missing_processes = [
+        row["process_id"] for row in telemetry if not row["telemetry_present"]
+    ]
+    deviations = []
+    if missing_processes:
+        deviations.append(f"missing telemetry: {', '.join(missing_processes)}")
+    if len(all_gpu_names) > 1:
+        deviations.append("multiple GPU names were recorded")
+    if all_gpu_names and any("A40" not in name for name in all_gpu_names):
+        deviations.append("telemetry includes a non-A40 GPU")
+    output["gpu_conditions"] = {
+        "all_processes_have_telemetry": all(row["telemetry_present"] for row in telemetry),
+        "missing_processes": missing_processes,
+        "gpu_names": sorted(all_gpu_names),
+        "mixed_gpu_names": len(all_gpu_names) > 1,
+        "metric_row_count": len(telemetry_metrics),
+        "deviations": deviations,
+    }
     (output_root / "analysis.json").write_text(json.dumps(output, indent=2) + "\n")
     return output
 
