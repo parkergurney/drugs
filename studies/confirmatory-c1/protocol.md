@@ -3,7 +3,7 @@
 ## Version and status
 
 - Protocol version: 0.3
-- Status: C1 complete; D1 instrumentation correction frozen after setup failure
+- Status: C1 and exploratory D1 complete; A1 planned
 - Pilot used to design protocol: P1
 - Outcomes inspected: P1 and the five-process C1 reproduction on P1
 - Sealed C1 reduced-precision outputs inspected: none
@@ -23,11 +23,11 @@ submodules. All 27 cases produced empty operator traces and explicit
 four diagnostic policies. No operator-localization result existed to inspect.
 
 The three uninstrumented timing processes completed before this analysis
-failure and remain frozen. They will not be rerun. The correction skips hooks
+failure and remain frozen. They were not rerun. The correction skips hooks
 on ScriptModules, records their names, observes their nearest eager-module
 boundaries, retains the prospectively specified targeted TorchDispatch probe,
 and makes empty or malformed traces an immediate diagnostic error. Only the
-invalid `d1-trace-01` process and derived analysis will be rerun under tag
+invalid `d1-trace-01` process and derived analysis were rerun under tag
 `d1-p1-tracer-fix-v2`. The original failed process is preserved in the
 checksummed pre-fix raw archive.
 
@@ -236,7 +236,7 @@ the tested boundary conditions under which reduced precision is not beneficial.
 |---|---|---|---|
 | P1 | Complete | Initial MACE-OFF23(S)/A40 feasibility | No |
 | C1 | Complete | Independent A40 reproduction | Yes |
-| D1 | Ready | Numerical and timing localization | Exploratory |
+| D1 | Complete | Numerical and timing localization | Exploratory |
 | A1 | Planned | FP32-protected operation ablations | Mixed |
 | G1 | Planned | Cross-model and cross-hardware generalization | Yes |
 | M1 | Conditional | MD observable equivalence | Yes |

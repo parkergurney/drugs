@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "experiment_id": "D1-A40-P1-LOCALIZATION",
+  "status": "complete",
+  "study_type": "exploratory_failure_localization",
+  "scientific_gate_decision": "review_required",
+  "provider": "RunPod",
+  "timing_code": {
+    "commit": "0257594121043ecd35e72c8f91f0d3befbf844eb",
+    "tag": "d1-p1-preflight-v1"
+  },
+  "diagnostic_analysis_code": {
+    "commit": "e2707b3adc29774d61142f79c75b673a21d5f4c1",
+    "tag": "d1-p1-tracer-fix-v2"
+  },
+  "input_sha256": {
+    "frames.npz": "f7e759b6f0050b82eae88ff99416a2d43f50eac9e2e944a7524e80eaff40a28d",
+    "c1-evaluations.parquet": "da741dc69df6052f83c2036282af52bb1b403eb85c4ee4fb3aa8f1ac55cedaa8",
+    "model": "9bd176f569bb26925f5d8ae7779e01babafaed42bece49f34cb1f561925a8149",
+    "config": "8cd269786419937aaac3a5efb6bdbd478699fcdb459390986f76982d141e96af"
+  },
+  "environment": {
+    "gpu": "NVIDIA A40",
+    "gpu_memory_mib": 46068,
+    "driver": "570.195.03",
+    "cuda_runtime": "12.1",
+    "python": "3.11.10",
+    "torch": "2.4.1",
+    "mace-torch": "0.3.16",
+    "ase": "3.29.0",
+    "numpy": "2.4.6",
+    "platform": "Linux-6.8.0-64-generic-x86_64-with-glibc2.35"
+  },
+  "design": {
+    "selected_frame_count": 27,
+    "diagnostic_process_count": 1,
+    "timing_process_count": 3,
+    "timing_process_ids": ["d1-time-01", "d1-time-02", "d1-time-03"],
+    "batch_sizes": [1, 8, 32],
+    "warmups": 20,
+    "timed_iterations": 100,
+    "diagnostic_thresholds": {
+      "tf32": 0.01,
+      "bf16_amp": 0.08
+    }
+  },
+  "results": {
+    "evidence_status": "evidence_complete",
+    "localized_nonfinite_case_count": 6,
+    "threshold_crossing_case_count": 8,
+    "localized_nonfinite_policy": "bf16_amp",
+    "first_nonfinite_operation_group": "dense_contraction",
+    "first_threshold_operation_group": "reduction_or_accumulation",
+    "tf32_demonstrated_speedup": false,
+    "bf16_demonstrated_speedup": false
+  },
+  "artifacts": {
+    "final_bundle": {
+      "filename": "precision-md-d1-a40-results.tar.gz",
+      "sha256": "cf439c83a1ed501e4170184c441862d0bf201e68037268e551700d5092e0d26b"
+    },
+    "pre_fix_raw_bundle": {
+      "filename": "precision-md-d1-a40-raw-before-analysis-fix.tar.gz",
+      "sha256": "1cb9d0b1b020b7c2fbde6289d343975399bea46ebfdf3eea0e0a71d77738f444"
+    },
+    "persistent_url": null
+  }
+}

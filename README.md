@@ -1,200 +1,178 @@
-# precision-md
+# PreciseMD
 
-`precision-md` is a reproducible study of when reduced-precision inference is
-both faster and numerically reliable for pretrained machine-learning
-interatomic potentials. The current implementation evaluates MACE-OFF23-small
-under FP32, TF32, and BF16-autocast policies on stratified molecular
-configurations.
+[![CI](https://github.com/parkergurney/PreciseMD/actions/workflows/ci.yml/badge.svg)](https://github.com/parkergurney/PreciseMD/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-The completed NVIDIA A40 pilot found no viable reduced-precision policy for the
-tested model and workload. TF32 was effectively speed-neutral, while BF16 was
-slower and produced six nonfinite evaluations. This is a bounded pilot result,
-not a claim about all MLIPs or hardware.
+**PreciseMD is a reproducible GPU benchmarking and numerical-diagnostics
+framework for reduced-precision machine-learning interatomic potentials.** It
+tests whether faster arithmetic actually improves end-to-end energy-and-force
+inference without introducing nonfinite forces, broken equivariance, or
+configuration-dependent numerical error.
+
+The completed NVIDIA A40 study found that blanket reduced precision was not a
+useful optimization for MACE-OFF23-small: TF32 provided no measurable speedup,
+while BF16 autocast was 9–12% slower at the model level and produced six
+localized nonfinite failures on adversarial close-contact geometries. Operator
+tracing placed the first observed BF16 discrepancy at an addition/accumulation
+boundary and the first nonfinite values at downstream dense matrix
+contractions. The result motivates targeted precision placement and optimized
+equivariant kernels rather than blanket autocast.
+
+## Results at a glance
+
+| Policy | A40 performance | Numerical behavior | Outcome |
+|---|---|---|---|
+| FP32 | Operational baseline | Stable on ordinary and high-force diagnostics | Retain |
+| TF32 | No demonstrated end-to-end speedup | Finite on all 27 D1 cases; sensitive on adversarial close contacts | No deployment benefit |
+| BF16 AMP | 9–12% slower for prepared-model inference | Six localized nonfinite close-contact cases | Reject blanket autocast |
+
+These are bounded results for one model, software stack, workload, and GPU.
+The diagnostic set intentionally over-represents difficult configurations, so
+six failures in 27 cases is not a population failure-rate estimate.
+
+## What this project demonstrates
+
+- Independent, isolated GPU benchmark processes with counterbalanced policy
+  order and resumable outputs.
+- Process-first hierarchical bootstrap confidence intervals that treat
+  processes—not timing iterations—as independent experimental units.
+- Immutable dataset freezing, SHA-256 provenance, model/configuration hashes,
+  environment capture, and artifact validation.
+- Continuous GPU telemetry and guards against dirty commits, wrong hardware,
+  altered inputs, mixed trials, and accidental CPU benchmarking.
+- Energy, force, finite-difference, equivariance, batching-invariance, and
+  operator-level diagnostics for FP64, FP32, TF32, and BF16.
+- Failure-preserving research workflows: numerical exceptions and nonfinite
+  outputs remain outcomes rather than being silently excluded.
+
+## Study progression
+
+```mermaid
+flowchart LR
+    P1[P1 pilot<br/>feasibility] --> C1[C1<br/>five-process reproduction]
+    C1 --> D1[D1<br/>failure and timing localization]
+    D1 --> A1[A1 next<br/>operator-aware ablations]
+```
+
+- **P1 — pilot:** TF32 was speed-neutral; BF16 was slower and returned six
+  nonfinite results across the 300-frame stress-stratified dataset.
+- **C1 — independent reproduction:** five fresh A40 processes confirmed the
+  practical performance conclusion and motivated component-level diagnosis.
+- **D1 — exploratory localization:** three independent timing processes plus
+  one instrumented diagnostic process localized BF16's slowdown to forward and
+  force-gradient execution and its failures to an
+  accumulation-to-dense-contraction path.
+- **A1 — planned:** protect candidate operations in FP32 one factor at a time
+  and separately test compilation and optimized equivariant kernels.
+
+The prospective design and decision rules are in the
+[confirmatory protocol](studies/confirmatory-c1/protocol.md). Completed records
+are preserved for [P1](studies/pilot-p1-a40/README.md) and
+[D1](studies/d1-p1-a40/README.md).
+
+## Architecture
+
+```text
+rMD17 inputs
+    -> deterministic stratified frame selection
+    -> immutable checksummed dataset
+    -> isolated GPU trial directories + telemetry
+    -> process-level validation and hierarchical analysis
+    -> targeted numerical/operator diagnostics
+    -> checksummed portable result bundle
+```
+
+The core is an installable Python package under `src/precision_md`. Experiment
+settings live in versioned YAML, guarded shell entry points orchestrate rented
+GPU runs, and compact study records keep large immutable artifacts out of Git.
+
+## Quick start
+
+Python 3.11 and [uv](https://docs.astral.sh/uv/) are the reference development
+environment:
+
+```bash
+git clone https://github.com/parkergurney/PreciseMD.git
+cd PreciseMD
+uv sync --extra test
+uv run pytest
+uv run precisemd --help
+```
+
+The historical `precision-md` command remains as a compatibility alias so
+frozen experiment commands and manifests stay reproducible.
+
+GPU/MACE development uses the locked optional environment:
+
+```bash
+uv sync --extra ml --extra test
+uv run precisemd --help
+```
+
+MACE checkpoints and rMD17 archives are supplied locally and are not
+redistributed by this repository. Expected rMD17 inputs are
+`data/rmd17/{ethanol,malonaldehyde,aspirin}.npz`, each containing `R` and either
+`z` or `nuclear_charges`.
+
+## Reproducing the studies
+
+The complete A40 workflows are guarded, resumable entry points:
+
+```bash
+# Five independent C1 reproduction processes and combined analysis
+scripts/run-a40-c1-reproduction.sh
+
+# D1 component timing, operator tracing, analysis, and packaging
+scripts/run-a40-d1.sh
+```
+
+The scripts verify the tagged code state, expected A40, immutable input hashes,
+locked model, trial isolation, telemetry, and final checksums. See the
+[protocol](studies/confirmatory-c1/protocol.md) and study records before
+attempting a scientific reproduction; the scripts intentionally refuse
+unfrozen or inconsistent runs.
+
+Useful lower-level commands include:
+
+```bash
+uv run precisemd prepare-data --config configs/gate1.yaml
+uv run precisemd benchmark --config configs/gate1.yaml --allow-gpu-benchmark
+uv run precisemd analyze-trials --trials results/gate1 --output results/c1-analysis
+uv run precisemd validate-d1 --config configs/d1-p1.yaml
+```
 
 ## Repository layout
 
 ```text
 configs/       Versioned experiment configurations
-paper/         Manuscript source
-scripts/       Reproducible GPU entry points and validation utilities
-src/           Installable precision_md package
-studies/       Frozen study records and prospective protocols
-tests/         CPU unit and workflow tests
+paper/         Manuscript source (work in progress)
+scripts/       Guarded GPU workflows and validation utilities
+src/           Installable PreciseMD implementation
+studies/       Frozen study records and prospective protocol
+tests/         Unit, artifact, analysis, and workflow regression tests
 REFERENCES.md  Literature source index
 ```
 
-Raw datasets, model checkpoints, generated results, downloaded papers, and
-complete result bundles are intentionally excluded from Git. Frozen studies
-commit compact metadata, summaries, checksums, and retrieval information.
+Raw datasets, model checkpoints, generated results, and full result bundles
+are intentionally excluded from Git. Study manifests record their hashes; a
+persistent archival URL will be added before formal publication.
 
-## Installation
+## Scope and next step
 
-Python 3.11 is the reference environment. Install the CPU test environment:
+PreciseMD does not claim that reduced precision is unsuitable for all MLIPs.
+The present evidence covers MACE-OFF23-small on one A40 software/hardware
+environment. Close-contact frames are stress tests, FP32 is an operational
+baseline rather than physical truth, and operator localization came from one
+instrumented process.
 
-```bash
-uv sync --extra test
-uv run pytest
-```
+The next experiment, A1, will test whether selective FP32 protection or
+optimized kernels can recover a joint speed-and-reliability benefit. Only
+policies passing finite-output, performance, and numerical criteria should
+advance to cross-model, cross-hardware, or molecular-dynamics validation.
 
-For CUDA/MACE experiments:
+## License and citation
 
-```bash
-uv sync --extra ml --extra test
-uv run precision-md --help
-```
-
-MACE checkpoints and rMD17 archives must be supplied locally. Expected rMD17
-files are `data/rmd17/{ethanol,malonaldehyde,aspirin}.npz`, each containing `R`
-and either `z` or `nuclear_charges`.
-
-## Running Gate 1
-
-GPU benchmarking is deliberately guarded against accidental CPU execution:
-
-```bash
-uv run precision-md prepare-data --config configs/gate1.yaml
-uv run precision-md benchmark --config configs/gate1.yaml --allow-gpu-benchmark
-uv run precision-md analyze --results results
-uv run precision-md render-report --results results --output report/decision.md
-```
-
-The convenience entry point `scripts/run-gpu-gate1.sh` performs the same
-sequence. Record the Git commit, configuration hash, model hash, environment,
-GPU telemetry, random seed, command, and output checksums for every scientific
-run.
-
-## Running independent trials
-
-Prepare and checksum the 300-frame dataset once. Then point every fresh
-benchmark process at that immutable file, give it a unique run ID, and vary
-only the timing seed used to randomize policy order:
-
-```bash
-uv run precision-md benchmark --config configs/gate1.yaml \
-  --frames results/gate1/frames.npz --run-id c1-run-01 \
-  --timing-seed 2026081901 --allow-gpu-benchmark
-uv run precision-md benchmark --config configs/gate1.yaml \
-  --frames results/gate1/frames.npz --run-id c1-run-02 \
-  --timing-seed 2026081902 --allow-gpu-benchmark
-```
-
-With the committed Gate 1 configuration these write isolated results beneath
-`results/gate1/<run-id>/`. A benchmark refuses to overwrite an existing trial.
-Run additional processes in the same way, then combine them with the
-process-first hierarchical bootstrap:
-
-```bash
-uv run precision-md analyze-trials \
-  --trials results/gate1 --output results/c1-analysis
-```
-
-Every trial manifest records its run ID, timing seed, frozen-frame path and
-SHA-256, experiment/config/Git provenance, and model hash. Multi-trial analysis
-rejects mixed frame, model, configuration, dataset, or experiment hashes. When
-`--run-id` is used, the benchmark copies the canonical `frames.npz` into the
-trial and verifies its hash.
-
-Create a portable immutable dataset bundle with:
-
-```bash
-uv run precision-md freeze-dataset \
-  --source data/frozen/p1 --output artifacts/datasets/p1 \
-  --dataset-id p1 --provenance studies/pilot-p1-a40/manifest.json
-uv run precision-md validate-dataset \
-  --dataset artifacts/datasets/p1 --dataset-id p1
-```
-
-Each bundle contains `frames.npz`, `selection.json`,
-`candidate_scores.parquet`, `manifest.json`, and `SHA256SUMS`. Freezing is
-atomic and idempotent for matching content and refuses to replace a different
-dataset.
-
-On an A40, `scripts/run-a40-c1-reproduction.sh` performs the guarded complete
-workflow: it imports P1, prepares and freezes the disjoint C1 dataset once,
-packages C1 immediately, runs all five isolated P1 reproduction processes
-sequentially, samples GPU telemetry once per second, analyzes the trials, and
-packages the result tree. Complete verified trials are resumable; partial or
-inconsistent trials are never overwritten. It refuses a dirty tracked
-worktree, a non-A40 GPU, altered inputs, or inconsistent artifacts.
-
-```text
-artifacts/
-  datasets/{p1,c1}/
-  trials/c1-reproduction/c1-run-*/
-  analysis/c1-reproduction/
-  system/
-  bundles/
-```
-
-## Preparing the sealed C1 dataset
-
-Recover the exact P1 `frames.npz`, `selection.json`, and
-`candidate_scores.parquet` into `data/frozen/p1/` before GPU work. The C1
-configuration selects a new dataset while excluding every molecular source
-frame represented in P1:
-
-```bash
-uv run precision-md prepare-data --config configs/c1-dataset.yaml
-```
-
-This writes the resumable staging directory
-`results/datasets/c1-confirmatory/`, including a dataset manifest
-with source-data, selection, frame, model, and exclusion checksums. Preparation
-fails on any P1 source-frame overlap. C1 preparation uses FP32 scoring only;
-do not benchmark this dataset under TF32 or BF16 until the confirmatory energy
-and force margins are frozen in a dated protocol amendment. Freeze the
-completed staging directory with:
-
-```bash
-uv run precision-md freeze-dataset \
-  --source results/datasets/c1-confirmatory \
-  --output artifacts/datasets/c1 --dataset-id c1-confirmatory
-```
-
-## Running D1 failure localization
-
-D1 is an exploratory mechanism study on P1. It freezes 27 diagnostic frames
-from the combined C1 reproduction, traces the locked MACE 0.3.16 model under
-FP64/FP32/TF32/BF16, performs energy-force and invariance checks, and measures
-uninstrumented timing components in three fresh A40 processes.
-
-The authoritative settings are in `configs/d1-p1.yaml`; run the complete
-scientific workflow with `scripts/run-a40-d1.sh`. The script validates the
-tagged code, A40 environment, immutable inputs, telemetry, isolated timing
-processes, analysis, checksums, and result bundle. D1 validation certifies
-artifact completeness, not a causal scientific verdict. The frozen scientific
-design is recorded in
-[`studies/confirmatory-c1/protocol.md`](studies/confirmatory-c1/protocol.md).
-
-## Research provenance
-
-Pilot P1 is documented in
-[`studies/pilot-p1-a40/`](studies/pilot-p1-a40/README.md). The exact code state
-that produced it was legacy commit `bc48cb5`. The pre-reset history containing
-that commit is preserved separately with the pilot artifacts; its bundle
-checksum is recorded in the study. The study directory was added afterward to
-record the result and does not claim to be the executing commit.
-
-The next experiment is prospectively defined in
-[`studies/confirmatory-c1/protocol.md`](studies/confirmatory-c1/protocol.md).
-The A100 configuration is confirmation-only and should not be interpreted as a
-substitute for the independent A40 reproduction.
-
-## Reproducibility policy
-
-- Treat numerical failures, nonfinite values, and out-of-memory events as
-  outcomes rather than exclusions.
-- Preserve pilot, exploratory, and confirmatory labels.
-- Freeze primary metrics, margins, exclusions, and stopping rules before
-  examining confirmatory outcomes.
-- Report ordinary, high-force, and deliberately adversarial close-contact
-  configurations separately.
-- Use FP64 only as a diagnostic where supported; FP32 is the operational
-  baseline, not physical ground truth.
-- Store large immutable artifacts in a release or research-data repository and
-  identify them here by checksum and persistent URL or DOI.
-
-## Citation
-
-Citation metadata will be added when the manuscript is submitted. Literature
-used to motivate and design the study is listed in [REFERENCES.md](REFERENCES.md).
+PreciseMD is released under the [MIT License](LICENSE). Software citation
+metadata is provided in [CITATION.cff](CITATION.cff); add the study archive DOI
+when it becomes available. The literature used to motivate and design the
+study is indexed in [REFERENCES.md](REFERENCES.md).

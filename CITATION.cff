@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If you use PreciseMD, please cite this software and the archived study release."
+title: "PreciseMD: Precision benchmarking and numerical diagnostics for machine-learning interatomic potentials"
+type: software
+authors:
+  - family-names: Gurney
+    given-names: Parker
+version: 0.1.0
+date-released: 2026-08-30
+license: MIT
+repository-code: "https://github.com/parkergurney/PreciseMD"
+url: "https://github.com/parkergurney/PreciseMD"
+abstract: >-
+  A reproducible GPU benchmarking and numerical-diagnostics framework for
+  evaluating the performance and reliability of reduced-precision
+  machine-learning interatomic potentials.

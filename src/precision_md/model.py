@@ -15,7 +15,7 @@ class MaceEvaluator:
             import torch
             from mace.calculators import mace_off
         except ImportError as e:
-            raise RuntimeError("install precision-md[ml] to evaluate MACE") from e
+            raise RuntimeError("install precisemd[ml] to evaluate MACE") from e
         self.torch = torch
         self.default_dtype = default_dtype
         self.calculator = mace_off(

@@ -3,9 +3,13 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "precision-md"
+name = "precisemd"
 version = "0.1.0"
-description = "Feasibility gates for adaptive precision molecular dynamics"
+description = "Reproducible precision benchmarking and numerical diagnostics for ML interatomic potentials"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Parker Gurney" }]
 requires-python = ">=3.11,<3.13"
 dependencies = [
   "numpy>=1.26,<3", "pandas>=2.2,<3", "pyarrow>=16,<20",
@@ -18,7 +22,12 @@ ml = ["torch==2.4.1", "mace-torch==0.3.16", "ase>=3.23,<4", "ase-db-backends>=0.
 test = ["pytest>=8,<9", "hypothesis>=6,<7"]
 
 [project.scripts]
+precisemd = "precision_md.cli:main"
 precision-md = "precision_md.cli:main"
+
+[project.urls]
+Repository = "https://github.com/parkergurney/PreciseMD"
+Issues = "https://github.com/parkergurney/PreciseMD/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/precision_md"]

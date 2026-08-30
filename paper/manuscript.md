@@ -1,4 +1,4 @@
-# Beyond FP32 Benchmarking: Performance and Numerical Reliability of Reduced-Precision Pretrained Interatomic Potentials
+# PreciseMD: Performance and Numerical Reliability of Reduced-Precision Pretrained Interatomic Potentials
 
 ## Abstract
 
@@ -7,16 +7,19 @@ evaluated by their predictive accuracy, simulation speed, memory consumption,
 and short-run stability. Numerical precision is rarely treated as an explicit
 benchmark dimension, even though reduced-precision tensor operations can alter
 both computational throughput and the energy gradients used as molecular
-forces. We introduce a reproducible framework for measuring the performance,
+forces. We introduce PreciseMD, a reproducible framework for measuring the performance,
 numerical reliability, and simulation-level consequences of TF32 and BF16
 inference relative to FP32. An initial feasibility experiment with
 MACE-OFF23(S) on an NVIDIA A40 found no useful blanket reduced-precision policy:
 TF32 achieved a speed ratio of 0.996 (95% bootstrap interval 0.989–1.003), while
 BF16 autocast achieved 0.820 (0.806–0.834) and returned finite results for only
-294 of 300 stress-stratified configurations. These pilot results do not imply a
-universal limitation of reduced precision. They motivate an operator-level,
-cross-workload, and cross-hardware study of the conditions required for MLIP
-inference to be both faster and scientifically reliable.
+294 of 300 stress-stratified configurations. A five-process reproduction
+confirmed the practical performance conclusion. Subsequent component timing
+found BF16 slower in both energy-forward and force-gradient execution, while
+operator tracing localized six selected close-contact failures to an
+accumulation-to-dense-contraction path. These results do not imply a universal
+limitation of reduced precision; they show that useful MLIP acceleration may
+require operator-aware precision placement and optimized equivariant kernels.
 
 ## 1. Introduction
 
@@ -186,14 +189,36 @@ energy error may mix composition-dependent offsets with changes to the local
 energy surface. These observations motivate, but do not substitute for, the
 planned failure-localization experiments.
 
-## 6. Planned diagnostic and generalization study
+## 6. Reproduction and failure localization
 
-The next stage will reproduce P1 in independent processes, decompose timing
-costs, compare with FP64 diagnostics, localize the first nonfinite operations,
-and separate atomic/reference-energy offsets from interaction energies. Guided
-by those measurements, controlled ablations will protect individual operation
-classes in FP32. Passing policies will then be evaluated across additional
-models, workload scales, and a second GPU architecture.
+C1 repeated the P1 workload in five fresh A40 processes with independently
+randomized policy order and process-first hierarchical analysis. It reproduced
+the practical conclusion that TF32 did not accelerate the workload and blanket
+BF16 did not provide a viable fast path. Timing-output validity was separated
+from numerical-output validity so nonfinite policy outcomes remained preserved
+rather than being discarded as timing outliers.
+
+D1 then selected 27 diagnostic configurations from the frozen P1/C1 evidence.
+Three fresh uninstrumented processes decomposed graph construction, transfer,
+energy-forward, force-gradient, conversion, and total costs. TF32 remained
+near parity with FP32. BF16 prepared-model ratios ranged from 0.895 to 0.915,
+with ratios below one indicating slower execution. Its deficit was concentrated
+in the energy-forward and force-gradient components rather than graph
+construction or transfers.
+
+The instrumented D1 process compared FP64, FP32, TF32, and BF16. Six selected
+BF16 close-contact cases produced localized nonfinite values. Their first
+observed nonfinite boundaries were dense `aten.mm` contractions; eight BF16
+cases crossed the frozen relative-RMS diagnostic threshold at an earlier
+`aten.add.Tensor` accumulation boundary. TF32 produced no localized nonfinite
+case or frozen trace-threshold crossing, although adversarial close-contact
+geometries remained sensitive across lower-precision policies.
+
+The first observed dense-contraction failure is not automatically its root
+cause. The earlier accumulation discrepancy may feed unsafe values into the
+matrix multiplication. A1 will therefore protect candidate operation classes
+in FP32 one factor at a time and will test compilation and optimized
+equivariant kernels as separate interventions.
 
 ## 7. Threats to validity
 
@@ -216,10 +241,12 @@ catastrophic configurations, so nonfinite rates and tails are retained.
 
 ### External validity
 
-P1 used one small pretrained model, three small molecular species, one A40, and
-one software stack. Close-contact frames are useful stress tests but may not
-represent configurations reached in ordinary MD. Claims will therefore be
-limited to tested domains until replicated across model and GPU architectures.
+P1, C1, and D1 used one small pretrained model, three small molecular species,
+one A40 architecture, and one software stack. Close-contact frames are useful
+stress tests but may not represent configurations reached in ordinary MD. The
+27 D1 frames were selected for diagnosis, so their failure fraction is not a
+population estimate. Claims remain limited to tested domains until replicated
+across model and GPU architectures.
 
 ### Simulation validity
 
@@ -230,8 +257,11 @@ prospectively chosen observables and equivalence margins.
 
 ## 8. Current conclusion
 
-The pilot establishes a narrow result: blanket TF32 and BF16 autocast did not
-provide safe acceleration for MACE-OFF23(S) under the tested A40 workload. The
-broader thesis remains an open empirical question: reliable reduced-precision
-MLIP inference may require operator-aware precision placement and may depend on
-architecture, workload, software kernels, and hardware.
+P1, C1, and D1 establish a narrow but replicated result: blanket TF32 and BF16
+autocast did not provide safe acceleration for MACE-OFF23(S) under the tested
+A40 workload. TF32 was numerically safer but speed-neutral; BF16 was slower and
+failed on selected adversarial geometries. Direct component timing and tracing
+now support the hypothesis that both kernel eligibility and nonuniform
+operation sensitivity matter. The next question is whether operator-aware
+precision placement or optimized kernels can produce a joint performance and
+reliability benefit without changing the scientific operating domain.

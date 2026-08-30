@@ -19,7 +19,7 @@ def _dependencies():
         from ase.md.langevin import Langevin
         from ase.md.verlet import VelocityVerlet
         from ase.md.velocitydistribution import MaxwellBoltzmannDistribution, Stationary
-    except ImportError as e: raise RuntimeError("install precision-md[ml] for trajectory workflows") from e
+    except ImportError as e: raise RuntimeError("install precisemd[ml] for trajectory workflows") from e
     return units, molecule, Calculator, all_changes, Langevin, VelocityVerlet, MaxwellBoltzmannDistribution, Stationary
 
 

@@ -153,7 +153,8 @@ def prepare_data(config):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(prog="precision-md"); sub = parser.add_subparsers(dest="command", required=True)
+    program = Path(sys.argv[0]).name if argv is None else "precisemd"
+    parser = argparse.ArgumentParser(prog=program); sub = parser.add_subparsers(dest="command", required=True)
     for name in ("prepare-data", "benchmark", "prepare-trajectory", "fork-segments"):
         p = sub.add_parser(name); p.add_argument("--config", required=True)
         if name == "benchmark":
@@ -202,7 +203,7 @@ def main(argv=None):
         run_benchmark(load_config(args.config, Gate1Config),
                       args.allow_gpu_benchmark, args.frames, args.run_id,
                       args.timing_seed, args.experiment_id,
-                      shlex.join(["precision-md", *(argv if argv is not None else sys.argv[1:])]))
+                      shlex.join([program, *(argv if argv is not None else sys.argv[1:])]))
     elif args.command in ("prepare-trajectory", "fork-segments"):
         config = load_config(args.config, Gate2Config)
         from .gpu_workflow import fork_segments, prepare_trajectory
