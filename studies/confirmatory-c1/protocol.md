@@ -2,8 +2,8 @@
 
 ## Version and status
 
-- Protocol version: 0.2
-- Status: C1 complete; D1 design frozen before intermediate results
+- Protocol version: 0.3
+- Status: C1 complete; D1 instrumentation correction frozen after setup failure
 - Pilot used to design protocol: P1
 - Outcomes inspected: P1 and the five-process C1 reproduction on P1
 - Sealed C1 reduced-precision outputs inspected: none
@@ -13,6 +13,23 @@
 
 Any change after freezing must be recorded in a dated amendment before the
 affected result is analyzed.
+
+### 2026-08-30 D1 instrumentation correction
+
+The first D1 instrumented process failed uniformly before model evaluation
+because ordinary PyTorch forward hooks are unsupported on MACE TorchScript
+submodules. All 27 cases produced empty operator traces and explicit
+`register_forward_pre_hook is not supported on ScriptModules` errors for all
+four diagnostic policies. No operator-localization result existed to inspect.
+
+The three uninstrumented timing processes completed before this analysis
+failure and remain frozen. They will not be rerun. The correction skips hooks
+on ScriptModules, records their names, observes their nearest eager-module
+boundaries, retains the prospectively specified targeted TorchDispatch probe,
+and makes empty or malformed traces an immediate diagnostic error. Only the
+invalid `d1-trace-01` process and derived analysis will be rerun under tag
+`d1-p1-tracer-fix-v2`. The original failed process is preserved in the
+checksummed pre-fix raw archive.
 
 The confirmatory dataset may be constructed using geometry and FP32 force
 scores only. Its TF32 and BF16 outputs must not be generated or inspected until

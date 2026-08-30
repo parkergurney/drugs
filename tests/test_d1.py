@@ -10,7 +10,8 @@ from precision_md.d1_analysis import (
     _center_energies, _first_divergences, _timing_summary, analyze_d1, validate_d1,
 )
 from precision_md.d1_diagnostics import DIAGNOSTIC_FILES
-from precision_md.d1_selection import select_d1_frames
+from precision_md.d1_probe import TraceCollector, TraceSetupError
+from precision_md.d1_selection import select_d1_frames, write_d1_selection
 from precision_md.data import sha256_file
 
 
@@ -73,6 +74,28 @@ def test_d1_selection_is_deterministic_and_includes_nonfinite(tmp_path):
     assert first["frame_count"] == len(selected)
 
 
+def test_d1_selection_reuses_original_commit_when_scientific_fields_match(
+    tmp_path, monkeypatch
+):
+    output = tmp_path / "d1"
+    output.mkdir()
+    original = {
+        "schema_version": 1,
+        "selection_script_commit": "original",
+        "records": [{"frame_id": "f"}],
+    }
+    (output / "d1-selection.json").write_text(json.dumps(original, indent=2) + "\n")
+    monkeypatch.setattr(
+        "precision_md.d1_selection.select_d1_frames",
+        lambda config: original | {"selection_script_commit": "repair"},
+    )
+
+    reused = write_d1_selection(_config(tmp_path, output_dir=output))
+
+    assert reused["selection_script_commit"] == "original"
+    assert json.loads((output / "d1-selection.json").read_text()) == original
+
+
 @pytest.mark.skipif(
     not Path("data/frozen/p1/frames.npz").is_file()
     or not Path("artifacts/analysis/c1-reproduction/evaluations.parquet").is_file(),
@@ -119,6 +142,68 @@ def test_first_divergence_uses_frozen_policy_thresholds(tmp_path):
     output = _first_divergences(config, traces).iloc[0]
     assert output.first_threshold_boundary == "tensor_product"
     assert output.first_nonfinite_boundary == "forces"
+
+
+def test_first_divergence_rejects_empty_trace_schema(tmp_path):
+    with pytest.raises(ValueError, match="operator trace is empty"):
+        _first_divergences(_config(tmp_path), pd.DataFrame())
+
+
+def test_trace_collector_skips_script_modules_but_observes_eager_parent():
+    torch = pytest.importorskip("torch")
+
+    class ScaleShiftMACE(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.atomic_energies_fn = torch.nn.Identity()
+            self.node_embedding = torch.jit.trace(
+                torch.nn.Linear(2, 2), torch.ones(1, 2)
+            )
+            self.spherical_harmonics = torch.nn.Identity()
+            self.radial_embedding = torch.nn.Identity()
+            self.interactions = torch.nn.ModuleList()
+            self.products = torch.nn.ModuleList()
+            self.readouts = torch.nn.Sequential(torch.nn.Identity())
+            self.scale_shift = torch.nn.Identity()
+
+        def forward(self, value):
+            return self.readouts(self.node_embedding(value))
+
+    model = ScaleShiftMACE()
+    collector = TraceCollector(model, "fp32", "frame")
+    with collector:
+        model(torch.ones(1, 2))
+
+    assert "node_embedding" in collector.skipped_script_modules
+    assert any(row["boundary"].startswith("readouts") for row in collector.rows)
+
+
+def test_trace_collector_hook_setup_is_transactional(monkeypatch):
+    torch = pytest.importorskip("torch")
+
+    class ScaleShiftMACE(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.atomic_energies_fn = torch.nn.Identity()
+            self.node_embedding = torch.nn.Identity()
+            self.spherical_harmonics = torch.nn.Identity()
+            self.radial_embedding = torch.nn.Identity()
+            self.interactions = torch.nn.ModuleList()
+            self.products = torch.nn.ModuleList()
+            self.readouts = torch.nn.ModuleList()
+            self.scale_shift = torch.nn.Identity()
+
+    model = ScaleShiftMACE()
+    monkeypatch.setattr(
+        model.node_embedding,
+        "register_forward_hook",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("broken hook")),
+    )
+    collector = TraceCollector(model, "fp32", "frame")
+    with pytest.raises(TraceSetupError, match="node_embedding"):
+        collector.__enter__()
+    assert not collector._handles
+    assert not model.node_embedding._forward_pre_hooks
 
 
 def test_energy_centering_is_within_policy_and_composition():

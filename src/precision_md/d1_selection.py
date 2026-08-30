@@ -143,9 +143,15 @@ def write_d1_selection(config: D1Config) -> dict:
     output.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(selection, indent=2) + "\n"
     if output.exists():
-        if output.read_text(encoding="utf-8") != payload:
+        existing = json.loads(output.read_text(encoding="utf-8"))
+        # A code-only diagnostic repair must retain the prospectively frozen
+        # selection and its original selecting commit. Permit reuse only when
+        # every scientific field is identical.
+        comparable_existing = existing | {"selection_script_commit": None}
+        comparable_selection = selection | {"selection_script_commit": None}
+        if comparable_existing != comparable_selection:
             raise FileExistsError(f"refusing to replace a different D1 selection: {output}")
-        return selection
+        return existing
     temporary = output.with_suffix(".json.tmp")
     temporary.write_text(payload, encoding="utf-8")
     temporary.replace(output)

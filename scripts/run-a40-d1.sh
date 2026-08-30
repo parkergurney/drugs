@@ -7,7 +7,7 @@ readonly P1_DATASET="artifacts/datasets/p1"
 readonly D1_ROOT="artifacts/diagnostics/d1-p1"
 readonly SYSTEM_DIR="artifacts/system/d1-p1"
 readonly BUNDLES="artifacts/bundles"
-readonly EXPECTED_TAG="d1-p1-preflight-v1"
+readonly EXPECTED_TAG="d1-p1-tracer-fix-v2"
 
 if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
   echo "Refusing D1 from a dirty tracked worktree" >&2

@@ -51,6 +51,17 @@ def _timing_runs(config: D1Config) -> list[Path]:
 
 
 def _first_divergences(config: D1Config, traces: pd.DataFrame) -> pd.DataFrame:
+    required = {
+        "frame_id", "policy", "repeat", "boundary_order", "boundary",
+        "module_class", "operation_group", "nonfinite_count",
+        "relative_rms_from_fp32",
+    }
+    missing = sorted(required - set(traces.columns))
+    if traces.empty or missing:
+        raise ValueError(
+            "D1 operator trace is empty or lacks its required schema; "
+            f"rows={len(traces)}, missing_columns={missing}"
+        )
     rows = []
     reduced = traces[traces["policy"].isin(config.diagnostic_thresholds)]
     for (frame_id, policy, repeat), group in reduced.groupby(

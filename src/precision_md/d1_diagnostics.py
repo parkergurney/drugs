@@ -16,7 +16,7 @@ import pandas as pd
 from .benchmark import _atomic_batch
 from .config import D1Config
 from .d1_probe import (
-    TraceCollector, add_geometry_trace, compare_trace_to_fp32,
+    TraceCollector, TraceSetupError, add_geometry_trace, compare_trace_to_fp32,
     targeted_operation_mode,
 )
 from .d1_selection import _verify_inputs, d1_config_sha256
@@ -99,6 +99,8 @@ def _raw_call(evaluator, prepared, policy, trace=False, repeat=0, targeted=False
                 )
                 collector._record("model.forces", model, "output", out["forces"])
     except (RuntimeError, NotImplementedError, TypeError) as exc:
+        if isinstance(exc, TraceSetupError):
+            raise
         error = f"{type(exc).__name__}: {exc}"
     return out, collector, error
 
@@ -437,11 +439,33 @@ def run_d1_diagnostics(config: D1Config, run_id: str, allow_gpu=False):
                 "equivariance.parquet": equivariance_rows,
                 "batching-invariance.parquet": batch_rows,
             }
+            required_trace_columns = {
+                "frame_id", "policy", "repeat", "boundary_order", "boundary",
+                "nonfinite_count",
+            }
+            trace_columns = set(pd.DataFrame(trace_rows).columns)
+            if not trace_rows or not required_trace_columns <= trace_columns:
+                missing = sorted(required_trace_columns - trace_columns)
+                raise RuntimeError(
+                    "D1 instrumentation produced an unusable operator trace "
+                    f"for {frame['frame_id']} repeat={repeat}; "
+                    f"rows={len(trace_rows)}, missing_columns={missing}"
+                )
             _write_case(case_dir, tables, {
                 "schema_version": 1, "frame_id": frame["frame_id"], "repeat": repeat,
                 "experiment_id": config.experiment_id,
                 "frames_sha256": config.expected_frames_sha256,
                 "model_hash": config.expected_model_hash,
+                "script_module_hook_policy": (
+                    "skip unsupported ScriptModule hooks; observe nearest eager "
+                    "boundaries and targeted TorchDispatch operations"
+                ),
+                "skipped_script_modules": sorted({
+                    name
+                    for result in base_results.values()
+                    if result["collector"] is not None
+                    for name in result["collector"].skipped_script_modules
+                }),
             })
             print(f"D1 diagnostics {frame['frame_id']} repeat={repeat} complete", flush=True)
 

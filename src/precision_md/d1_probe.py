@@ -10,6 +10,10 @@ import numpy as np
 from .mace_adapter import SUPPORTED_MACE_VERSION
 
 
+class TraceSetupError(RuntimeError):
+    """Raised when D1 cannot install its required eager-module probes."""
+
+
 def _tensor_items(value: Any, path: str = "value"):
     """Yield tensors from nested MACE inputs and outputs with stable paths."""
     try:
@@ -102,6 +106,7 @@ class TraceCollector(AbstractContextManager):
     _order: int = 0
     _scatter_originals: list[tuple[Any, Any]] = field(default_factory=list)
     _scatter_counts: dict[str, int] = field(default_factory=dict)
+    skipped_script_modules: list[str] = field(default_factory=list)
 
     def __post_init__(self):
         installed = importlib.metadata.version("mace-torch")
@@ -159,19 +164,38 @@ class TraceCollector(AbstractContextManager):
             self._order += 1
 
     def __enter__(self):
+        import torch
+
         for name, module in self.model.named_modules():
             if not name or not self._wanted(name):
                 continue
-            self._handles.append(module.register_forward_pre_hook(
-                lambda mod, args, module_name=name: self._record(
-                    module_name, mod, "input", args
-                )
-            ))
-            self._handles.append(module.register_forward_hook(
-                lambda mod, args, output, module_name=name: self._record(
-                    module_name, mod, "output", output
-                )
-            ))
+            # PyTorch deliberately rejects ordinary forward hooks on compiled
+            # ScriptModules. Observe those operations through the nearest eager
+            # parent boundary and the targeted TorchDispatch probe instead.
+            if isinstance(module, torch.jit.ScriptModule):
+                self.skipped_script_modules.append(name)
+                continue
+            installed = []
+            try:
+                installed.append(module.register_forward_pre_hook(
+                    lambda mod, args, module_name=name: self._record(
+                        module_name, mod, "input", args
+                    )
+                ))
+                installed.append(module.register_forward_hook(
+                    lambda mod, args, output, module_name=name: self._record(
+                        module_name, mod, "output", output
+                    )
+                ))
+            except Exception as exc:
+                for handle in reversed(installed):
+                    handle.remove()
+                self.__exit__(None, None, None)
+                raise TraceSetupError(
+                    f"failed to install D1 hooks on {name} "
+                    f"({type(module).__name__}): {exc}"
+                ) from exc
+            self._handles.extend(installed)
         # MACE scatter reductions are functions rather than Modules, so regular
         # forward hooks cannot see them. Wrap the two imported references only
         # for the lifetime of this trace and always restore them in __exit__.
