@@ -2,10 +2,11 @@
 
 ## Version and status
 
-- Protocol version: 0.1
-- Status: draft, to be frozen before experiment C1
+- Protocol version: 0.2
+- Status: C1 complete; D1 design frozen before intermediate results
 - Pilot used to design protocol: P1
-- Confirmatory data inspected: none
+- Outcomes inspected: P1 and the five-process C1 reproduction on P1
+- Sealed C1 reduced-precision outputs inspected: none
 - Confirmatory selection seed: `2026082601`
 - Confirmatory frame exclusion: all source frames represented in the frozen P1
   selection, including sources used to construct close-contact frames
@@ -58,7 +59,15 @@ estimates need not match P1.
 
 ### D1: failure localization
 
-For representative ordinary, high-force, close-contact, and nonfinite frames:
+D1 is exploratory mechanism work on the frozen P1 dataset and combined
+five-process C1 reproduction. It does not evaluate the separately prepared C1
+confirmatory dataset. The diagnostic population includes every
+reduced-policy nonfinite frame and, for each reduced policy and stratum, the
+nearest finite frame to the minimum, median, 95th percentile, and maximum
+process-aggregated maximum force error. Ties are resolved by `frame_id`, and
+duplicate selections are not replaced.
+
+For every selected ordinary, high-force, close-contact, and nonfinite frame:
 
 1. compare FP64 diagnostics, FP32, TF32, and BF16;
 2. record the first operation producing a nonfinite or extreme discrepancy;
@@ -67,8 +76,22 @@ For representative ordinary, high-force, close-contact, and nonfinite frames:
 5. perform finite-difference energy–force consistency checks;
 6. separate forward, force-gradient, conversion, transfer, and graph costs.
 
+Module-boundary relative RMS is defined as
+`RMS(policy - FP32) / max(RMS(FP32), 1e-12)`. Exploratory localization flags
+are 0.01 for TF32 and 0.08 for BF16 AMP. These flags identify operations for
+investigation; they are not scientific accuracy margins or policy-acceptance
+criteria. Finite-difference steps are `1e-3`, `3e-4`, and `1e-4` angstrom.
+
+D1 timing uses the original P1 representative batch construction at batch
+sizes 1, 8, and 32, with 20 warmups and 100 measured iterations in each of
+three fresh A40 processes. Instrumented traces are never used as timing
+measurements. FP64 is diagnostic only. Unsupported operations, nonfinite
+values, exceptions, and batching-dependent behavior are retained as outcomes.
+
 Gate D1 passes when the dominant performance and numerical failure mechanisms
 are supported by direct measurements rather than inferred from final outputs.
+Artifact validation establishes evidence completeness but does not
+automatically make a causal scientific gate decision.
 
 ### A1: operator-level ablations
 
@@ -117,6 +140,8 @@ ends with the benchmark and mechanism study.
 ## Confirmatory sample plan
 
 - C1: at least five independent processes per policy and batch configuration.
+- D1: one resumable instrumented diagnostic process and three independent,
+  uninstrumented A40 timing processes.
 - Within process: retain the P1 20 warm-ups and 100 paired measured iterations
   unless a timing-autocorrelation pilot justifies a frozen amendment.
 - Accuracy: reuse the frozen 300 frames for direct reproduction, then evaluate
@@ -193,8 +218,8 @@ the tested boundary conditions under which reduced precision is not beneficial.
 | ID | Status | Purpose | Confirmatory? |
 |---|---|---|---|
 | P1 | Complete | Initial MACE-OFF23(S)/A40 feasibility | No |
-| C1 | Planned | Independent A40 reproduction | Yes |
-| D1 | Planned | Numerical and timing localization | Exploratory |
+| C1 | Complete | Independent A40 reproduction | Yes |
+| D1 | Ready | Numerical and timing localization | Exploratory |
 | A1 | Planned | FP32-protected operation ablations | Mixed |
 | G1 | Planned | Cross-model and cross-hardware generalization | Yes |
 | M1 | Conditional | MD observable equivalence | Yes |

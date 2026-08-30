@@ -9,7 +9,7 @@ from .types import (AtomicBatch, BatchedEvaluationResult, EvaluationResult,
 
 
 class MaceEvaluator:
-    def __init__(self, model="small", device="cuda"):
+    def __init__(self, model="small", device="cuda", default_dtype="float32"):
         self.device = device
         try:
             import torch
@@ -17,7 +17,10 @@ class MaceEvaluator:
         except ImportError as e:
             raise RuntimeError("install precision-md[ml] to evaluate MACE") from e
         self.torch = torch
-        self.calculator = mace_off(model=model, device=device, default_dtype="float32")
+        self.default_dtype = default_dtype
+        self.calculator = mace_off(
+            model=model, device=device, default_dtype=default_dtype
+        )
         install_fp32_result_adapter(self.calculator)
         self.model_hash = self._hash_model()
 
@@ -68,7 +71,9 @@ class MaceEvaluator:
         result.metadata["result_adapter"] = result_adapter_diagnostics(self.calculator)
         return result
 
-    def prepare_batch(self, batches: list[AtomicBatch]) -> PreparedMaceBatch:
+    def prepare_batch(
+        self, batches: list[AtomicBatch], target_device: str | None = None
+    ) -> PreparedMaceBatch:
         """Construct one genuine disconnected MACE/PyG graph batch."""
         if not batches:
             raise ValueError("cannot prepare an empty batch")
@@ -99,7 +104,9 @@ class MaceEvaluator:
                 ))
                 frame_ids.append(batch.frame_ids[0] if batch.frame_ids else str(index))
                 atom_counts.append(batch.atom_count)
-        graph = torch_geometric.Batch.from_data_list(graphs).to(self.device)
+        graph = torch_geometric.Batch.from_data_list(graphs).to(
+            self.device if target_device is None else target_device
+        )
         if int(graph.num_graphs) != len(batches):
             raise RuntimeError("MACE graph batching did not preserve the frame count")
         return PreparedMaceBatch(

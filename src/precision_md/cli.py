@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 from .analysis import analyze_results, analyze_trials
 from .benchmark import run_benchmark
-from .config import Gate1Config, Gate2Config, load_config
+from .config import D1Config, Gate1Config, Gate2Config, load_config
 from .data import (
     Frame, close_contact, ensure_disjoint_sources, load_excluded_sources,
     ordinary_indices, select_high_force, sha256_file,
@@ -181,6 +181,21 @@ def main(argv=None):
     p.add_argument("--dataset", required=True)
     p.add_argument("--experiment-id")
     p = sub.add_parser("render-report"); p.add_argument("--results", required=True); p.add_argument("--output", required=True)
+    p = sub.add_parser("select-d1")
+    p.add_argument("--config", required=True)
+    p = sub.add_parser("diagnose-d1")
+    p.add_argument("--config", required=True)
+    p.add_argument("--run-id", required=True)
+    p.add_argument("--allow-gpu-diagnostic", action="store_true")
+    p = sub.add_parser("time-d1")
+    p.add_argument("--config", required=True)
+    p.add_argument("--run-id", required=True)
+    p.add_argument("--timing-seed", required=True, type=int)
+    p.add_argument("--allow-gpu-benchmark", action="store_true")
+    p = sub.add_parser("analyze-d1")
+    p.add_argument("--config", required=True)
+    p = sub.add_parser("validate-d1")
+    p.add_argument("--config", required=True)
     args = parser.parse_args(argv)
     if args.command == "prepare-data": prepare_data(load_config(args.config, Gate1Config))
     elif args.command == "benchmark":
@@ -204,6 +219,27 @@ def main(argv=None):
         print(json.dumps(validate_trial(args.trial, args.dataset,
                                         args.experiment_id), indent=2))
     elif args.command == "render-report": render_report(args.results, args.output)
+    elif args.command == "select-d1":
+        from .d1_selection import write_d1_selection
+        print(json.dumps(write_d1_selection(load_config(args.config, D1Config)), indent=2))
+    elif args.command == "diagnose-d1":
+        from .d1_diagnostics import run_d1_diagnostics
+        print(json.dumps(run_d1_diagnostics(
+            load_config(args.config, D1Config), args.run_id,
+            args.allow_gpu_diagnostic,
+        ), indent=2))
+    elif args.command == "time-d1":
+        from .d1_timing import run_d1_timing
+        print(json.dumps(run_d1_timing(
+            load_config(args.config, D1Config), args.run_id,
+            args.timing_seed, args.allow_gpu_benchmark,
+        ), indent=2))
+    elif args.command == "analyze-d1":
+        from .d1_analysis import analyze_d1
+        print(json.dumps(analyze_d1(load_config(args.config, D1Config)), indent=2))
+    elif args.command == "validate-d1":
+        from .d1_analysis import validate_d1
+        print(json.dumps(validate_d1(load_config(args.config, D1Config)), indent=2))
 
 
 if __name__ == "__main__": main()

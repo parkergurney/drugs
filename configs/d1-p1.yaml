@@ -1,0 +1,23 @@
+experiment_id: D1-A40-P1-LOCALIZATION
+dataset_id: p1
+dataset: artifacts/datasets/p1
+c1_analysis: artifacts/analysis/c1-reproduction
+output_dir: artifacts/diagnostics/d1-p1
+device: cuda
+model: small
+expected_frames_sha256: f7e759b6f0050b82eae88ff99416a2d43f50eac9e2e944a7524e80eaff40a28d
+expected_evaluations_sha256: da741dc69df6052f83c2036282af52bb1b403eb85c4ee4fb3aa8f1ac55cedaa8
+expected_model_hash: 9bd176f569bb26925f5d8ae7779e01babafaed42bece49f34cb1f561925a8149
+diagnostic_policies: [fp64, fp32, tf32, bf16_amp]
+timing_policies: [fp32, tf32, bf16_amp]
+selection_quantiles: [0.0, 0.5, 0.95, 1.0]
+diagnostic_thresholds:
+  tf32: 0.01
+  bf16_amp: 0.08
+relative_rms_floor: 1.0e-12
+finite_difference_steps_a: [1.0e-3, 3.0e-4, 1.0e-4]
+batch_sizes: [1, 8, 32]
+warmups: 20
+timed_iterations: 100
+trace_repeats: 1
+seed: 2026082801

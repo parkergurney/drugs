@@ -151,6 +151,21 @@ uv run precision-md freeze-dataset \
   --output artifacts/datasets/c1 --dataset-id c1-confirmatory
 ```
 
+## Running D1 failure localization
+
+D1 is an exploratory mechanism study on P1. It freezes 27 diagnostic frames
+from the combined C1 reproduction, traces the locked MACE 0.3.16 model under
+FP64/FP32/TF32/BF16, performs energy-force and invariance checks, and measures
+uninstrumented timing components in three fresh A40 processes.
+
+The authoritative settings are in `configs/d1-p1.yaml`; run the complete
+scientific workflow with `scripts/run-a40-d1.sh`. The script validates the
+tagged code, A40 environment, immutable inputs, telemetry, isolated timing
+processes, analysis, checksums, and result bundle. D1 validation certifies
+artifact completeness, not a causal scientific verdict. The frozen scientific
+design is recorded in
+[`studies/confirmatory-c1/protocol.md`](studies/confirmatory-c1/protocol.md).
+
 ## Research provenance
 
 Pilot P1 is documented in
